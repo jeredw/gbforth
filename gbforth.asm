@@ -4,9 +4,21 @@ INCLUDE "ibmpc1.inc"
 SECTION "Globals", WRAM0
 CurChar: db
 FrameCounter: db
+KeyTimer: db
 CurButtons: db
 NewButtons: db
 CursorPtr: dw
+
+; Keyboard geometry
+def KEYBOARD_TOP   equ SCREEN_HEIGHT_PX - 8 * 4
+def PICKER_START_Y equ 16 + KEYBOARD_TOP
+def PICKER_END_Y   equ PICKER_START_Y + 4 * 8
+def PICKER_START_X equ 7
+def PICKER_END_X   equ PICKER_START_X + 8 * 20
+
+; Key repeat params
+def KEY_REPEAT_RESET equ $10  ; frames before first repeat
+def KEY_REPEAT_RATE  equ $4   ; frames between repeats
 
 SECTION "Top of stack", WRAMX[$DFFF], BANK[1]
 TopOfStack: ds 0
@@ -34,8 +46,6 @@ OamCopy: ds RomOamCopy.End - RomOamCopy
 SECTION "Header", ROM0[$100]
   jp Boot
   ds $150 - @, 0  ; Reserve space for the header
-
-def KEYBOARD_TOP equ SCREEN_HEIGHT_PX - 8 * 4 
 
 Boot:
   nop
@@ -91,9 +101,9 @@ Boot:
   call FillMemory
   ; Init cursor sprite
   ld hl, OamShadow
-  ld [hl], 16 + KEYBOARD_TOP ; y
+  ld [hl], PICKER_START_Y ; y
   inc hl
-  ld [hl], 7        ; x
+  ld [hl], PICKER_START_X ; x
   inc hl
   ld [hl], 0        ; tile $95 (_)
   inc hl
@@ -161,21 +171,37 @@ Main:
 .picker_down:
   ld a, [PickerY]
   add a, 8
+  cp a, PICKER_END_Y
+  jr c, .picker_down_ok
+  ld a, PICKER_START_Y
+.picker_down_ok:
   ld [PickerY], a
   jp .draw_cursor
 .picker_up:
   ld a, [PickerY]
   sub a, 8
+  cp a, PICKER_START_Y
+  jr nc, .picker_up_ok
+  ld a, PICKER_END_Y - 8
+.picker_up_ok
   ld [PickerY], a
   jp .draw_cursor
 .picker_right:
   ld a, [PickerX]
   add a, 8
+  cp a, PICKER_END_X
+  jr c, .picker_right_ok
+  ld a, PICKER_START_X
+.picker_right_ok:
   ld [PickerX], a
   jp .draw_cursor
 .picker_left:
   ld a, [PickerX]
   sub a, 8
+  cp a, 255
+  jr nz, .picker_left_ok
+  ld a, PICKER_END_X - 8
+.picker_left_ok:
   ld [PickerX], a
   jp .draw_cursor
 .backspace
@@ -271,7 +297,7 @@ UpdateButtons:
   ; Poll half the controller
   ld a, JOYP_GET_BUTTONS
   call .read_one_nibble
-  ld b, a ; B7-4 = 1; B3-0 = unpressed buttons
+  ld b, a           ; B7-4 = 1; B3-0 = unpressed buttons
 
   ; Poll the other half
   ld a, JOYP_GET_CTRL_PAD
@@ -283,6 +309,23 @@ UpdateButtons:
   ; And release the controller
   ld a, JOYP_GET_NONE
   ldh [rJOYP], a
+
+  ; Key repeat
+  ld a, [CurButtons]  ; any keys down?
+  jr z, .clear_repeat ; if no keys down, no repeat
+  ld a, [KeyTimer]    ; increment repeat timer
+  dec a
+  ld [KeyTimer], a
+  jr nz, .new_buttons ; no repeat yet
+  ld a, 0
+  ld [CurButtons], a  ; reset cur buttons so we repeat
+  ld a, KEY_REPEAT_RATE
+  ld [KeyTimer], a    ; reset key timer to repeat rate
+  jr .new_buttons
+.clear_repeat
+  ld a, KEY_REPEAT_RESET
+  ld [KeyTimer], a    ; reset key repeat timer
+.new_buttons
 
   ; Combine with previous CurButtons to make NewButtons
   ld a, [CurButtons]
