@@ -15,6 +15,16 @@ NewButtons: db
 CursorX: db
 CursorY: db
 CursorPtr: dw
+CurPage: db
+PageBasePtr: dw
+PagePtr: dw
+Editing: db
+
+SECTION "Save RAM", SRAM[$A000], BANK[0]
+def PAGE_SIZE equ TILEMAP_AREA
+def NUM_PAGES equ 8
+def SAVE_SIZE equ PAGE_SIZE * NUM_PAGES
+SaveData: ds  SAVE_SIZE
 
 ; Editor control codes
 def CR equ 13
@@ -79,31 +89,30 @@ Boot:
   ; editor (during interrupts).
   ld sp, TopOfStack
   ld a, 0
+  ld [rNR52], a     ; Turn off audio.
   ld [CurButtons], a
   ld [NewButtons], a
   ld [FrameCounter], a
   ld [CursorX], a
   ld [KeyTimer], a
+  ld [CurPage], a
   ld a, 1
   ld [CursorY], a
-  ld a, SC
-  ld [CurChar], a
+  ld [Editing], a
   ld a, LOW($9820)
   ld [CursorPtr], a
   ld a, HIGH($9820)
   ld [CursorPtr+1], a
+  ld a, LOW(SaveData)
+  ld [PageBasePtr], a
+  ld a, HIGH(SaveData)
+  ld [PageBasePtr+1], a
+  ld a, LOW(SaveData+$20)
+  ld [PagePtr], a
+  ld a, HIGH(SaveData+$20)
+  ld [PagePtr+1], a
 
-  ; Turn off audio
-  ld [rNR52], a
-
-  ; Wait for vblank before turning off LCD
-.wait_for_vblank:
-  ld a, [rLY]
-  cp SCREEN_HEIGHT_PX
-  jr c, .wait_for_vblank
-  ; Disable LCD
-  ld a, 0
-  ld [rLCDC], a
+  call DisableLCD
 
   ; Copy tiles for font into VRAM at $8000
   ld de, Font
@@ -111,9 +120,44 @@ Boot:
   ld bc, Font.End - Font
   call CopyMemory
 
-  ; Clear tilemaps for text entry and for window
-  ld hl, TILEMAP0
-  ld bc, 2 * (TILEMAP1 - TILEMAP0)
+  ; See if data is in save ram
+  ld a, RAMG_SRAM_ENABLE
+  ld [rRAMG], a
+  ld hl, Header
+  ld bc, SaveData
+  ld d, Header.End - Header
+.test_header
+  ld a, [bc]        ; get byte of save data
+  cp a, [hl]        ; cp with header
+  jr nz, .clear_save_ram ; if mismatch, reset save
+  inc bc            ; next save data byte
+  inc hl            ; next header byte
+  dec d             ; count chars
+  jr nz, .test_header ; check if done comparing
+  jr .load_page0    ; match, load save page 0
+.clear_save_ram
+  ; Fill save ram with spaces
+  ld hl, SaveData
+  ld bc, SAVE_SIZE
+  ld d, SC
+  call FillMemory
+  ; Copy header into save ram so we keep it next time
+  ld de, Header
+  ld hl, SaveData
+  ld bc, Header.End - Header
+  call CopyMemory
+.load_page0
+  xor a
+  call LoadPageWithLCDDisabled
+
+  ; Init character at cursor pos
+  ld hl, $9820
+  ld a, [hl]
+  ld [CurChar], a
+
+  ; Clear tilemap for window
+  ld hl, TILEMAP1
+  ld bc, TILEMAP_AREA
   ld d, SC
   call FillMemory
 
@@ -155,18 +199,8 @@ Boot:
   ld a, STAT_LYC | STAT_MODE_1
   ld [rSTAT], a
 
-  ; Print startup message
-  ld de, Message
-  ld hl, TILEMAP0
-  ld bc, Message.End - Message
-  call CopyMemory
-
   ; Turn on LCD and enable BG with tiles starting from $8000
-  ld a, (LCDC_ON\
-         | LCDC_WIN_ON | LCDC_WIN_9C00\
-         | LCDC_BG_ON | LCDC_BLOCK01 | LCDC_BG_9800\
-         | LCDC_OBJ_ON | LCDC_OBJ_8)
-  ld [rLCDC], a
+  call EnableLCD
 
   ; Initialize bg palette
   ld a, EDITOR_PALETTE
@@ -183,6 +217,41 @@ Main:
   halt 
   nop 
   jr Main
+
+; Turn off LCD so we can copy vram safely
+DisableLCD:
+  ld a, [rLCDC]
+  and a, LCDC_ENABLE
+  ret z
+  ; Wait for vblank before disabling LCD
+.wait_for_vblank
+  ld a, [rLY]
+  cp SCREEN_HEIGHT_PX
+  jr c, .wait_for_vblank
+  ld a, 0
+  ld [rLCDC], a     ; Turn off lcd.
+  ret
+
+; Re-enable LCD after disabling it temporarily
+EnableLCD:
+  ld a, (LCDC_ON\
+         | LCDC_WIN_ON | LCDC_WIN_9C00\
+         | LCDC_BG_ON | LCDC_BLOCK01 | LCDC_BG_9800\
+         | LCDC_OBJ_ON | LCDC_OBJ_8)
+  ld [rLCDC], a
+  ret
+
+; Load save data page A into vram
+; Caller should make sure LCD is disabled first
+LoadPageWithLCDDisabled:
+  rlca              ; 256 * 4 * page number
+  rlca
+  or a, HIGH(SaveData) ; ram + page offset
+  ld d, a           ; de = page offset
+  ld e, LOW(SaveData)
+  ld hl, TILEMAP0
+  ld bc, TILEMAP_AREA
+  jp CopyMemory
 
 ; Text editor runs in vblank
 VBlankInterrupt:
@@ -323,6 +392,15 @@ PutChar:
   ld [hl], a
   ret
 
+PutCharInSaveRam:
+  ld hl, PagePtr
+  ld a, [hli]
+  ld h, [hl]
+  ld l, a
+  ld a, b
+  ld [hl], a
+  ret
+
 CursorBack:
   ld a, [CursorX]
   cp a, 0
@@ -365,6 +443,9 @@ MoveCursor:
   ld a, [CurChar]
   ld b, a
   call PutChar
+  ld a, [Editing]
+  call nz, PutCharInSaveRam
+  ; Compute new cursor offset in de
   xor a             ; clear a and carry
   ld e, a           ; clear e
   ld a, [CursorY]
@@ -378,6 +459,17 @@ MoveCursor:
   ld a, [CursorX]
   or a, e
   ld e, a           ; de = 32 * y + x
+  ; Adjust cursor pointer within sram
+  ld a, [PageBasePtr]
+  ld l, a
+  ld a, [PageBasePtr+1]
+  ld h, a
+  add hl, de
+  ld a, l
+  ld [PagePtr], a
+  ld a, h
+  ld [PagePtr+1], a
+  ; Adjust cursor pointer within vram
   ld hl, TILEMAP0
   add hl, de
   ld a, l
@@ -507,8 +599,8 @@ StatInterrupt:
   pop af
   reti
 
-Message:
-  db "\\gbforth 1.0"
+Header:
+  db "(gbforth)"
 .End
 
 OnScreenKeyboard:
