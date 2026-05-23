@@ -1,6 +1,9 @@
 INCLUDE "hardware.inc"
 INCLUDE "ibmpc1.inc"
 
+SECTION "PPU stat handler", ROM0[$0048]
+  jp StatInterrupt
+
 SECTION "Globals", WRAM0
 CurChar: db
 FrameCounter: db
@@ -140,6 +143,11 @@ Boot:
   ld [rWY], a
   ld a, 7
   ld [rWX], a
+  ; Raster interrupt to switch palettes for keyboard window
+  ld a, KEYBOARD_TOP - 1
+  ld [rLYC], a
+  ld a, STAT_LYC | STAT_MODE_1
+  ld [rSTAT], a
 
   ; Print startup message
   ld de, Message
@@ -158,6 +166,11 @@ Boot:
   ld a, %11100100
   ld [rBGP], a
   ld [rOBP0], a
+
+  ; Enable interrupts
+  ld a, IE_STAT
+  ld [rIE], a
+  ei
 
 Main:
   ld a, [rLY]       ; Wait for end of current vblank
@@ -455,6 +468,28 @@ UpdateButtons:
   or a, $F0         ; A7-4 = 1; A3-0 = unpressed keys
 .delay10
   ret
+
+; Raster interrupt to toggle keyboard bg
+StatInterrupt:
+  push af
+  ld a, [rSTAT]
+  and a, STAT_LYCF
+  jr z, .reset_pal  ; if vblank, just reset palette
+  ; else ly is one above keyboard, wait til end of visible line
+  ld a, 9
+.delay:
+  dec a
+  jr nz, .delay
+  ; Reset object palette to inverse video to distinguish keyboard vb
+  ld a, %10010011
+  jr .set_pal
+.reset_pal:
+  ; Reset normal palette for text editor area
+  ld a, %11100100
+.set_pal:
+  ld [rBGP], a
+  pop af
+  reti
 
 Message:
   db "\\gbforth 1.0"
