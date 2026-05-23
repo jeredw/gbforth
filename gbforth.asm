@@ -16,13 +16,16 @@ CursorX: db
 CursorY: db
 CursorPtr: dw
 
-; Control codes
+; Editor control codes
 def CR equ 13
 def UP equ 24
 def DN equ 25
 def RT equ 26
 def LT equ 27
 def SC equ 32
+
+def EDITOR_PALETTE   equ %11100100
+def KEYBOARD_PALETTE equ %10010011
 
 ; Keyboard geometry
 def KEYBOARD_TOP   equ SCREEN_HEIGHT_PX - 8 * 4
@@ -35,7 +38,7 @@ def PICKER_END_X   equ PICKER_START_X + 8 * SCREEN_WIDTH
 def KEY_REPEAT_RESET equ $10  ; frames before first repeat
 def KEY_REPEAT_RATE  equ $4   ; frames between repeats
 
-; Use up to 31 columns and scroll when we hit the last column, so that we don"t
+; Use up to 31 columns and scroll when we hit the last column, so that we don't
 ; wrap around and show the first character offscreen to the right.
 def MAX_COLUMN    equ TILEMAP_WIDTH - 1
 def SCROLL_COLUMN equ SCREEN_WIDTH - 1
@@ -166,7 +169,7 @@ Boot:
   ld [rLCDC], a
 
   ; Initialize bg palette
-  ld a, %11100100
+  ld a, EDITOR_PALETTE
   ld [rBGP], a
   ld [rOBP0], a
 
@@ -193,7 +196,7 @@ VBlankInterrupt:
   call OamCopy
 
   call UpdateButtons
-  ld a, [NewButtons]    ; DULRSEBA
+  ld a, [NewButtons]; DULRSEBA
   rla               ; down
   jr c, .picker_down
   rla               ; up
@@ -481,23 +484,24 @@ UpdateButtons:
 .delay10
   ret
 
-; Raster interrupt to toggle keyboard bg
+; Raster interrupt to toggle keyboard palette
+; Turns on keyboard palette on LY=LYC, and resets it on vblank
 StatInterrupt:
   push af
   ld a, [rSTAT]
   and a, STAT_LYCF
-  jr z, .reset_pal  ; if vblank, just reset palette
-  ; else ly is one above keyboard, wait til end of visible line
+  jr z, .reset_pal  ; vblank occurred, keyboard done
+  ; LY is one line above the keyboard, wait til end of visible line
   ld a, 9
 .delay:
   dec a
   jr nz, .delay
-  ; Reset object palette to inverse video to distinguish keyboard vb
-  ld a, %10010011
+  ; Reset object palette to inverse video to distinguish keyboard
+  ld a, KEYBOARD_PALETTE
   jr .set_pal
 .reset_pal:
   ; Reset normal palette for text editor area
-  ld a, %11100100
+  ld a, EDITOR_PALETTE
 .set_pal:
   ld [rBGP], a
   pop af
