@@ -3,6 +3,8 @@ INCLUDE "ibmpc1.inc"
 
 SECTION "PPU stat handler", ROM0[$0048]
   jp StatInterrupt
+SECTION "Vblank handler", ROM0[$0040]
+  jp VBlankInterrupt
 
 SECTION "Globals", WRAM0
 CurChar: db
@@ -70,7 +72,8 @@ Boot:
   nop
   di
   ; Set up stack at top of WRAM. We will use the hardware stack as the parameter
-  ; stack, but will also use it for subroutines during startup.
+  ; stack in the interpreter itself, but will also use it for subroutines in the
+  ; editor (during interrupts).
   ld sp, TopOfStack
   ld a, 0
   ld [CurButtons], a
@@ -168,18 +171,23 @@ Boot:
   ld [rOBP0], a
 
   ; Enable interrupts
-  ld a, IE_STAT
+  ld a, IE_STAT | IE_VBLANK
   ld [rIE], a
   ei
 
+; The interpreter loop runs during the frame
 Main:
-  ld a, [rLY]       ; Wait for end of current vblank
-  cp SCREEN_HEIGHT_PX
-  jr nc, Main
-.wait_for_vblank:
-  ld a, [rLY]       ; Wait for start of next vblank
-  cp SCREEN_HEIGHT_PX
-  jr c, .wait_for_vblank
+  halt 
+  nop 
+  jr Main
+
+; Text editor runs in vblank
+VBlankInterrupt:
+  push af
+  push bc
+  push de
+  push hl
+
   ; Now we are at the start of vblank
   ; Update sprites
   call OamCopy
@@ -296,7 +304,11 @@ Main:
   ld a, [FrameCounter]
   inc a
   ld [FrameCounter], a
-  jp Main
+  pop hl
+  pop de
+  pop bc
+  pop af
+  reti 
 
 ; Puts B at current cursor position
 PutChar:
