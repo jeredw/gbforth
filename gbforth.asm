@@ -20,6 +20,10 @@ PageBasePtr: dw
 PagePtr: dw
 Editing: db
 
+; Space reserved for parameter stack
+def PARAMETER_STACK_SIZE equ 256
+ParameterStack: ds PARAMETER_STACK_SIZE
+
 SECTION "Save RAM", SRAM[$A000], BANK[0]
 def PAGE_SIZE equ TILEMAP_AREA
 def NUM_PAGES equ 8
@@ -212,11 +216,104 @@ Boot:
   ld [rIE], a
   ei
 
+  ; bc is the top of the parameter stack.
+  ; hl points to the last used slot in the 16-bit parameter stack.
+  ; +-----------+
+  ; |    bc     | top of stack
+  ; +-----------+
+  ; |           | 5
+  ; +-----+-----+
+  ; |  2  |  3  | 3 <-- hl (base of second slot)
+  ; +-----+-----+
+  ; |  0  |  1  | 1
+  ; +-----+-----+
+  ; The parameter stack grows up. We want to pop low-order bytes first for
+  ; arithmetic, so parameters are stored in big endian byte order.
+  ld hl, ParameterStack+1
+
+  ; Test
+  call DOUBLE
+
 ; The interpreter loop runs during the frame
 Main:
   halt 
   nop 
   jr Main
+
+; Macro defcode creates a new dictionary entry and some associated code in rom.
+def prev_entry = 0
+MACRO DEFCODE ; DEFCODE name, label
+  def new_prev_entry = @
+  dw  prev_entry      ; Pointer to previous entry
+  def prev_entry = new_prev_entry
+  db  STRLEN(\1)      ; Length of entry name
+  db  \1              ; Entry name
+\2:
+ENDM
+
+; Macro NEXT is how we return control to the interpreter to string words together.
+; Because we are direct threading using call instructions, it is just ret.
+MACRO NEXT
+  ret
+ENDM
+
+; Discards top of stack ( x -- )
+  DEFCODE "DROP", _DROP
+  ld a, [hld]
+  ld c, a
+  ld a, [hld]
+  ld b, a
+  NEXT
+
+; Swaps first two stack entries ( x y -- y x )
+  DEFCODE "SWAP", _SWAP
+  ld a, [hld]
+  ld e, a
+  ld d, [hl]
+  ld [hl], b
+  ld a, c
+  ld [hli], a
+  ld b, d
+  ld c, e
+  NEXT
+
+; Duplicates top of stack ( x -- x x )
+  DEFCODE "DUP", _DUP
+  inc hl
+  ld a, b
+  ld [hli], a
+  ld [hl], c
+  NEXT
+
+; Duplicates second element on top ( x y -- x y x )
+  DEFCODE "OVER", _OVER
+  ld a, [hld]
+  ld e, a
+  ld a, [hli]
+  ld d, a
+  inc hl
+  ld a, b
+  ld [hli], a
+  ld [hl], c
+  ld b, d
+  ld c, e
+  NEXT
+
+; Adds z = x + y ( x y -- z )
+  DEFCODE "+", _PLUS
+  ld a, [hld]
+  add a, c
+  ld c, a
+  ld a, [hld]
+  adc a, b
+  ld b, a
+  NEXT
+
+; Sample user word for testing.
+  DEFCODE "DOUBLE", DOUBLE
+  call _DUP
+  call _PLUS
+  NEXT
 
 ; Turn off LCD so we can copy vram safely
 DisableLCD:
