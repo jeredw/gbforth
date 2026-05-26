@@ -27,6 +27,9 @@ CurPage: db
 PageBasePtr: dw
 PagePtr: dw
 Editing: db
+Radix: db
+; Last character is a sentinel
+FormatBuf: ds 10
 
 ; Space reserved for parameter stack
 def PARAMETER_STACK_SIZE equ 256
@@ -73,6 +76,9 @@ SECTION "OAM Shadow", WRAM0[$CF00]
 OamShadow: ds OAM_SIZE
 def PickerY equ OamShadow + 0
 def PickerX equ OamShadow + 1
+
+SECTION "Digit table", ROM0, ALIGN[16]
+Digits: db "0123456789ABCDEF"
 
 SECTION "OAM copy routine", ROM0
 ; DMA transfer (ROM copy, must be called in HRAM instead).
@@ -122,6 +128,10 @@ Boot:
   ld [PagePtr], a
   ld a, HIGH(SaveData+$20)
   ld [PagePtr+1], a
+  ld a, 10
+  ld [Radix], a
+  ld a, $ff
+  ld [FormatBuf + 9], a
 
   ; Copy tiles for font into VRAM at $8000
   ld de, Font
@@ -224,15 +234,11 @@ Boot:
   ; Set up forth state
   ld hl, ParameterStack+1
 
-  ; Test
-  call DOUBLE
+  ld bc, 31337
+  call PutUnsignedNumber
 
-  ;ld a, "O"
-  ;call PutChar
-  ;ld a, "K"
-  ;call PutChar
-  ;ld a, CR
-  ;call PutChar
+  ; Test
+  ;call DOUBLE
 
 ; The interpreter loop runs during the frame
 Main:
@@ -240,12 +246,51 @@ Main:
   nop 
   jr Main
 
-; Queue A to be printed during vblank.
-; Saves bc and hl.
-PutChar:
-  push bc
+; Prints the unsigned number BC.
+PutUnsignedNumber:
+  ld hl, FormatBuf + 8
+  ld a, [Radix]
+  ld d, a
+.get_digits
+  call UnsignedDiv16By8
+  ld [hld], a
+  ld a, b
+  or a, c
+  jr nz, .get_digits
+  inc hl
+.print_digits
+  ld a, [hli]
+  cp a, $ff
+  ret z
   push hl
-  ld b, a
+  ld h, HIGH(Digits)
+  ld l, a
+  ld a, [hl]
+  call PutChar
+  pop hl
+  jr .print_digits
+
+; Divides BC by the 8-bit value in D.
+; Returns quotient in BC, remainder in A.
+UnsignedDiv16By8:
+  ld e, 16
+  ld a, 0
+.div
+  sla c
+  rl b
+  rl a
+  cp a, d
+  jr c, .no_sub
+  sbc d
+  inc c
+.no_sub
+  dec e
+  jr nz, .div
+  ret
+
+; Prints the character from A.
+PutChar:
+  push af
   ld a, [PrintQueueLength]
   cp a, PRINT_QUEUE_SIZE    ; max length?
   jr nz, .has_space         ; if not, queue new char
@@ -255,16 +300,15 @@ PutChar:
   ld h, HIGH(PrintQueue)
   ld a, [PrintQueueTail]
   ld l, a                   ; hl = tail
-  ld [hl], b                ; store B at tail ptr
   inc a                     ; advance tail
   and a, PRINT_QUEUE_MASK   ; wrap if needed
   ld [PrintQueueTail], a    ; save tail ptr
+  pop af
+  ld [hl], a                ; store character at tail ptr
   ; The queue length is also updated during vblank so we need to make sure to
   ; update it using a single instruction that does read+modify+write.
   ld hl, PrintQueueLength
   inc [hl]
-  pop hl
-  pop bc
   ret
 
 ; Turn off LCD so we can copy vram safely
