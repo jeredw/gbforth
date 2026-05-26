@@ -10,12 +10,16 @@ nicely on one VRAM tilemap page. To save programs, we target an
 save RAM, allowing for 8 full pages. On boot, if save RAM starts with
 `(gbforth)`, we preserve it, otherwise it is reset.
 
-Forths usually work interactively, executing an outer interpreter loop to scan
-one input key at a time and printing output immediately. Gameboy Forth instead
-buffers the whole program. When you press START, the program is re-interpreted.
-If there is a syntax error, Gameboy Forth will return to the editor with the
-cursor positioned near it. Otherwise the cursor will not reappear until you
-press START again.
+Forth runs as a REPL that scans one input key at a time and prints output
+immediately. This is not 100% true, since modern Forths are line buffered to
+allow line editing at least. To make editing on a small screen simpler, Gameboy
+Forth buffers your whole program instead of just the current line.
+
+When you press START, the program is re-interpreted. If there is a syntax error,
+Gameboy Forth will return to the editor with the cursor positioned near it.
+Otherwise the editor cursor will not reappear until you press START again.
+Note that `KEY` still uses the on screen keyboard to read input, and if it is
+run in an immediate context it will block interpreting the rest of the program.
 
 ## VM details
 
@@ -66,7 +70,7 @@ the low-order byte of the second stack entry. So `DUP` is:
   NEXT
 ```
 
-### Alternative: hardware stack for parameters
+### Alternative: hardware stack for parameters?
 
 We could maybe get slightly more compact builtin code by using the 16 bit
 hardware stack for parameters, but this makes managing the return stack painful
@@ -102,3 +106,14 @@ endm
 We could fix `hl` as the return stack pointer and thread through `jp Ptr`, but
 this would make `NEXT` slow. There might be some cool hack we could do here but
 really just doing the simple thing seems to make most sense on this CPU.
+
+### Literals
+
+Many Forths store literals as inline data after a `LITERAL` word. This would
+save one byte of program space but costs an extra 16 cycles to load. We'll
+instead compile literals as
+
+```
+  call _DUP
+  ld bc, XXXX
+```

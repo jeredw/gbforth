@@ -3,8 +3,16 @@ INCLUDE "ibmpc1.inc"
 
 SECTION "PPU stat handler", ROM0[$0048]
   jp StatInterrupt
-SECTION "Vblank handler", ROM0[$0040]
+SECTION "VBlank handler", ROM0[$0040]
   jp VBlankInterrupt
+
+SECTION "Print buffer", WRAM0[$C000]
+def PRINT_QUEUE_SIZE equ 32
+def PRINT_QUEUE_MASK equ 31
+PrintQueue: ds PRINT_QUEUE_SIZE
+PrintQueueLength: db
+PrintQueueHead: db
+PrintQueueTail: db
 
 SECTION "Globals", WRAM0
 CurChar: db
@@ -88,18 +96,17 @@ SECTION "Header", ROM0[$100]
 Boot:
   nop
   di
-  ; Set up stack at top of WRAM. We will use the hardware stack as the parameter
-  ; stack in the interpreter itself, but will also use it for subroutines in the
-  ; editor (during interrupts).
   ld sp, TopOfStack
   ld a, 0
-  ld [rNR52], a     ; Turn off audio.
-  ld [CurButtons], a
-  ld [NewButtons], a
-  ld [FrameCounter], a
-  ld [CursorX], a
-  ld [KeyTimer], a
-  ld [CurPage], a
+  ld [rNR52], a     ; Turn off audio right away.
+  call DisableLCD
+
+  ; Clear all of WRAM for sanity.
+  ld hl, $c000
+  ld bc, $2000 - 4  ; Don't clobber return address on stack.
+  ld d, 0
+  call FillMemory
+  ; Init globals in WRAM.
   ld a, 1
   ld [CursorY], a
   ld [Editing], a
@@ -115,8 +122,6 @@ Boot:
   ld [PagePtr], a
   ld a, HIGH(SaveData+$20)
   ld [PagePtr+1], a
-
-  call DisableLCD
 
   ; Copy tiles for font into VRAM at $8000
   ld de, Font
@@ -216,29 +221,51 @@ Boot:
   ld [rIE], a
   ei
 
-  ; bc is the top of the parameter stack.
-  ; hl points to top-1 in the 16-bit parameter stack.
-  ; +-----------+
-  ; |    top    | bc
-  ; +-----------+
-  ; |   empty   | 5
-  ; +-----+-----+
-  ; |  2  |  3  | 3 <-- hl (base of second)
-  ; +-----+-----+
-  ; |  0  |  1  | 1
-  ; +-----+-----+
-  ; The parameter stack grows up. We want to pop low-order bytes first for
-  ; arithmetic, so parameters are stored in big endian byte order.
+  ; Set up forth state
   ld hl, ParameterStack+1
 
   ; Test
   call DOUBLE
+
+  ;ld a, "O"
+  ;call PutChar
+  ;ld a, "K"
+  ;call PutChar
+  ;ld a, CR
+  ;call PutChar
 
 ; The interpreter loop runs during the frame
 Main:
   halt 
   nop 
   jr Main
+
+; Queue A to be printed during vblank.
+; Saves bc and hl.
+PutChar:
+  push bc
+  push hl
+  ld b, a
+  ld a, [PrintQueueLength]
+  cp a, PRINT_QUEUE_SIZE    ; max length?
+  jr nz, .has_space         ; if not, queue new char
+  halt              ; wait for vblank to make room
+  jr PutChar
+.has_space
+  ld h, HIGH(PrintQueue)
+  ld a, [PrintQueueTail]
+  ld l, a                   ; hl = tail
+  ld [hl], b                ; store B at tail ptr
+  inc a                     ; advance tail
+  and a, PRINT_QUEUE_MASK   ; wrap if needed
+  ld [PrintQueueTail], a    ; save tail ptr
+  ; The queue length is also updated during vblank so we need to make sure to
+  ; update it using a single instruction that does read+modify+write.
+  ld hl, PrintQueueLength
+  inc [hl]
+  pop hl
+  pop bc
+  ret
 
 ; Turn off LCD so we can copy vram safely
 DisableLCD:
@@ -285,6 +312,12 @@ VBlankInterrupt:
   ; Now we are at the start of vblank
   ; Update sprites
   call OamCopy
+
+  ; If there is any output queued, prioritize printing it.
+  ; We only print one character per vblank.
+  ld a, [PrintQueueLength]
+  cp a, 0
+  jr nz, .pop_print_queue
 
   call UpdateButtons
   ld a, [NewButtons]; DULRSEBA
@@ -345,6 +378,17 @@ VBlankInterrupt:
 .left
   call CursorBack
   jp .draw_cursor
+.pop_print_queue:
+  dec a                     ; dec print queue length
+  ld [PrintQueueLength], a  ; update it
+  ld h, HIGH(PrintQueue)    ;
+  ld a, [PrintQueueHead]    ;
+  ld l, a                   ; hl = head of queue
+  inc a                     ; advance head pointer
+  and a, PRINT_QUEUE_MASK   ; wrap around if needed
+  ld [PrintQueueHead], a    ; store updated head
+  ld a, [hl]                ; get queued character
+  jr .print_char
 .pick_char:
   ld a, [PickerY]
   sub a, 16 + KEYBOARD_TOP
@@ -360,15 +404,16 @@ VBlankInterrupt:
   ld l, a
   ld h, HIGH(TILEMAP1)
   ld a, [hl]        ; get char from tilemap
+.print_char
   cp a, CR          ; newline
   jr z, .newline
-  cp a, DN
+  cp a, DN          ; arrow down
   jr z, .down
-  cp a, UP
+  cp a, UP          ; arrow up
   jr z, .up
-  cp a, RT
+  cp a, RT          ; arrow right
   jr z, .right
-  cp a, LT
+  cp a, LT          ; arrow left
   jr z, .left
   jr .advance
 .newline:
@@ -394,7 +439,7 @@ VBlankInterrupt:
   ld a, [CurChar]   ; Show char on frames 10-19
   ld b, a
 .put
-  call PutChar
+  call VBlankPutChar
   ld a, [FrameCounter]
   inc a
   ld [FrameCounter], a
@@ -405,7 +450,7 @@ VBlankInterrupt:
   reti 
 
 ; Puts B at current cursor position
-PutChar:
+VBlankPutChar:
   ld hl, CursorPtr
   ld a, [hli]
   ld h, [hl]
@@ -414,7 +459,7 @@ PutChar:
   ld [hl], a
   ret
 
-PutCharInSaveRam:
+VBlankPutCharInSaveRam:
   ld hl, PagePtr
   ld a, [hli]
   ld h, [hl]
@@ -464,9 +509,9 @@ UpDownStoreY:
 MoveCursor:
   ld a, [CurChar]
   ld b, a
-  call PutChar
+  call VBlankPutChar
   ld a, [Editing]
-  call nz, PutCharInSaveRam
+  call nz, VBlankPutCharInSaveRam
   ; Compute new cursor offset in de
   xor a             ; clear a and carry
   ld e, a           ; clear e

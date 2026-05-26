@@ -17,7 +17,28 @@ MACRO NEXT
   ret
 ENDM
 
-; Macro DROP pops the top of the parameter stack, setting bc to second.
+; Exit pops back to the calling word.
+  DEFCODE "EXIT", _EXIT
+  NEXT
+
+; Parameter stack layout (we'll just call this "the stack")
+;
+; bc is the top element of the stack.
+; hl points to the low-order byte of the second element.
+; +-----------+
+; |    top    | bc
+; +-----------+
+; |   empty   | 5
+; +-----+-----+
+; |  2  |  3  | 3 <-- hl (second)
+; +-----+-----+
+; |  0  |  1  | 1
+; +-----+-----+
+; The stack grows up. We want to pop low-order bytes first for arithmetic, so
+; elements are stored in big endian byte order.
+
+; Macro DROP pops the top of the stack, setting bc to second.
+; This sequence is reused in several stack primitives.
 MACRO DROP
   ld a, [hld]
   ld c, a
@@ -25,7 +46,8 @@ MACRO DROP
   ld b, a
 ENDM
 
-; Macro DUP pushes the current top onto the parameter stack.
+; Macro DUP pushes the current top onto the stack.
+; This sequence is reused in several stack primitives.
 MACRO DUP
   inc hl
   ld a, b
@@ -43,7 +65,7 @@ ENDM
   DUP 
   NEXT
 
-; Swaps first two stack entries ( n1 n2 -- n2 n1 )
+; Swaps first two elements on stack ( n1 n2 -- n2 n1 )
   DEFCODE "SWAP", _SWAP
   ; Save second in de temporarily.
   ld a, [hld]
@@ -58,7 +80,7 @@ ENDM
   ld c, e
   NEXT
 
-; Duplicates second element on top ( n1 n2 -- n1 n2 n1 )
+; Copies second stack element to top ( n1 n2 -- n1 n2 n1 )
   DEFCODE "OVER", _OVER
   ; Save second in de.
   ld a, [hld]
@@ -72,22 +94,28 @@ ENDM
   ld c, e
   NEXT
 
-; Rotates top three elements ( n1 n2 n3 -- n2 n3 n1 )
+; Rotates top three elements on stack ( n1 n2 n3 -- n2 n3 n1 )
   DEFCODE "ROT", _ROT
   ; Swap top with second.
   call _SWAP        ; ( n1 n2 n3 -- n1 n3 n2 )
   ; Swap top with third.
   dec hl            ; 
   dec hl            ; point hl at third
-  call _SWAP
+  call _SWAP        ; ( n1 n3 n2 -- n2 n3 n1 )
   inc hl            ; point hl back at second
   inc hl
   NEXT
 
-; Un-rotates top three elements ( n1 n2 n3 -- n3 n1 n2 )
+; Un-rotates top three elements on stack ( n1 n2 n3 -- n3 n1 n2 )
   DEFCODE "-ROT", _M_ROT
-  call _ROT
-  call _ROT
+  ; Swap top with third.
+  dec hl            ; 
+  dec hl            ; point hl at third
+  call _SWAP        ; ( n1 n2 n3 -- n3 n2 n1 )
+  inc hl            ; point hl back at second
+  inc hl
+  ; Swap top with second.
+  call _SWAP        ; ( n3 n2 n1 -- n3 n1 n2 )
   NEXT
 
 ; Drops 2 elements from top of stack ( n1 n2 -- ).
@@ -104,15 +132,15 @@ ENDM
   NEXT
 
 ; Swaps 2 elements at top of stack ( n1 n2 n3 n4 -- n3 n4 n1 n2 ).
-; : 2SWAP ROT >R ROT R> ;
   DEFCODE "2SWAP", _2SWAP
+  ; : 2SWAP ROT >R ROT R> ; is taken from forth-standard.org
   call _ROT
   call _TO_R
   call _ROT
   call _R_FROM
   NEXT
 
-; Duplicate top of stack if not zero.
+; Duplicates top of stack if not zero.
   DEFCODE "?DUP", _QDUP
   ld a, b
   or a, c
@@ -131,7 +159,7 @@ ENDM
   dec bc
   NEXT
 
-; Adds z = x + y ( n1 n2 -- sum )
+; Adds elements on stack ( n1 n2 -- sum )
   DEFCODE "+", _PLUS
   ; Add low byte of second to low byte of top.
   ld a, [hld]
@@ -143,7 +171,19 @@ ENDM
   ld b, a
   NEXT
 
-; Pop data stack and push return stack.
+; Subtracts top of stack from second ( n1 n2 -- difference )
+  DEFCODE "-", _MINUS
+  ; Subtract low byte of top from low byte of second.
+  ld a, [hld]
+  sub a, c
+  ld c, a
+  ; Carry into subtracting high byte of top from high byte of second.
+  ld a, [hld]
+  sbc a, b
+  ld b, a
+  NEXT
+
+; Pop parameter stack and push return stack.
   DEFCODE ">R", _TO_R
   push bc
   DROP
@@ -169,3 +209,12 @@ ENDM
   NEXT
 
 EXPORT DOUBLE
+
+; The outer interpreter loop is called QUIT (no really).
+  DEFCODE "QUIT", _QUIT
+.interpreter
+  ; TODO
+  jr .interpreter
+
+; The main program will call into _QUIT to start the interpreter.
+EXPORT _QUIT
