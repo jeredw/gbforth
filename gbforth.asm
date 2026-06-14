@@ -234,7 +234,18 @@ Boot:
   ; Set up forth state
   ld hl, ParameterStack+1
 
-  ld bc, 31337
+  ld a, "3"
+  ld [FormatBuf+0], a
+  ld a, "1"
+  ld [FormatBuf+1], a
+  ld a, "3"
+  ld [FormatBuf+2], a
+  ld a, "3"
+  ld [FormatBuf+3], a
+  ld a, "7"
+  ld [FormatBuf+4], a
+  call ScanUnsignedNumber
+  ;ld bc, 31337
   call PutUnsignedNumber
 
   ; Test
@@ -269,6 +280,63 @@ PutUnsignedNumber:
   call PutChar
   pop hl
   jr .print_digits
+
+; Scans the unsigned number in FormatBuf into BC.
+; E contains the number of digits consumed from FormatBuf.
+ScanUnsignedNumber:
+  ld hl, FormatBuf
+  ld b, 0           ; BC is the result
+  ld c, 0
+  ld e, 0           ; E counts how many characters scanned
+.scan_digit:
+  ld a, [hli]       ; get next char of buffer
+  sub a, "0"
+  ret c             ; < '0' is not a digit
+  cp a, 10
+  jr c, .digit      ; <= '9' is a digit
+  and a, $3f        ; convert to uppercase
+  sub a, "A"-"0"    ; get character relative to 'A'
+  ret c             ; < 'A' is not a digit
+  cp a, 6
+  ret nc            ; >= 'G' is not a digit
+  add a, 10
+.digit
+  inc e             ; consume this character
+  push af
+  push hl
+  ld a, [Radix]
+  call UnsignedMul16By8 ; bc * 10
+  pop hl
+  pop af
+  add a, c          ; (bc * 10) + a 
+  ld c, a
+  ld a, 0
+  adc b
+  ld b, a
+  ld a, e
+  cp a, 5           ; only scan up to 5 characters
+  ret z
+  jr .scan_digit
+
+; Multiplies BC by the 8-bit value in A.
+; Returns product in BC. Clobbers HL.
+UnsignedMul16By8:
+  ld h, 0           ; accumulate 16-bit product in hl
+  ld l, 0
+.mul
+  cp a, 0
+  jr z, .out        ; if multiplier is 0, we are done
+  srl a             ; halve multiplier and get next bit in carry
+  jr nc, .no_add    ; if even, don't accumulate
+  add hl, bc
+.no_add
+  sla c             ; shift multiplicand left
+  rl b
+  jr .mul
+.out
+  ld b, h
+  ld c, l
+  ret
 
 ; Divides BC by the 8-bit value in D.
 ; Returns quotient in BC, remainder in A.
