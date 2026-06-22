@@ -28,8 +28,19 @@ PageBasePtr: dw
 PagePtr: dw
 Editing: db
 Radix: db
+EXPORT ScanPtr
+ScanPtr: dw         ; The next character of the program input to scan
+Latest: dw          ; Points to the most recent dictionary entry
+WordFlags: db       ; Header of the current dictionary entry
+
+EXPORT WordLen
+; Note: wordlen must immediately precede FormatBuf so that it can be treated as
+; a length-prefixed byte string.
+WordLen:   db       ; Length of the most recent scanned word
 ; Last character is a sentinel
-FormatBuf: ds 10
+def FORMAT_BUF_LEN      equ 32
+def END_SENTINEL        equ $ff
+FormatBuf: ds FORMAT_BUF_LEN + 1
 
 ; Space reserved for parameter stack
 def PARAMETER_STACK_SIZE equ 256
@@ -130,8 +141,16 @@ Boot:
   ld [PagePtr+1], a
   ld a, 10
   ld [Radix], a
-  ld a, $ff
-  ld [FormatBuf + 9], a
+  ld a, END_SENTINEL
+  ld [FormatBuf + FORMAT_BUF_LEN], a  ; one byte past end of usable buffer
+  ld a, LOW(last_entry)
+  ld [Latest], a
+  ld a, HIGH(last_entry)
+  ld [Latest+1], a
+  ld a, LOW(SaveData)
+  ld [ScanPtr], a
+  ld a, HIGH(SaveData)
+  ld [ScanPtr+1], a
 
   ; Copy tiles for font into VRAM at $8000
   ld de, Font
@@ -160,6 +179,11 @@ Boot:
   ld bc, SAVE_SIZE
   ld d, SC
   call FillMemory
+  ; Set last byte of save ram to an invisible end sentinel to prevent scanning
+  ; past the end of input.
+  ld hl, SaveData + SAVE_SIZE - 1
+  ld a, END_SENTINEL
+  ld [hl], a
   ; Copy header into save ram so we keep it next time
   ld de, Header
   ld hl, SaveData
@@ -234,23 +258,6 @@ Boot:
   ; Set up forth state
   ld hl, ParameterStack+1
 
-  ld a, "3"
-  ld [FormatBuf+0], a
-  ld a, "1"
-  ld [FormatBuf+1], a
-  ld a, "3"
-  ld [FormatBuf+2], a
-  ld a, "3"
-  ld [FormatBuf+3], a
-  ld a, "7"
-  ld [FormatBuf+4], a
-  call ScanUnsignedNumber
-  ;ld bc, 31337
-  call PutUnsignedNumber
-
-  ; Test
-  ;call DOUBLE
-
 ; The interpreter loop runs during the frame
 Main:
   halt 
@@ -259,7 +266,7 @@ Main:
 
 ; Prints the unsigned number BC.
 PutUnsignedNumber:
-  ld hl, FormatBuf + 8
+  ld hl, FormatBuf + FORMAT_BUF_LEN - 1
   ld a, [Radix]
   ld d, a
 .get_digits
@@ -271,7 +278,7 @@ PutUnsignedNumber:
   inc hl
 .print_digits
   ld a, [hli]
-  cp a, $ff
+  cp a, END_SENTINEL
   ret z
   push hl
   ld h, HIGH(Digits)
@@ -281,15 +288,15 @@ PutUnsignedNumber:
   pop hl
   jr .print_digits
 
-; Scans the unsigned number in FormatBuf into BC.
-; E contains the number of digits consumed from FormatBuf.
+; Scans the unsigned number pointed to by HL into BC.
+; Leaves HL at the character after the number.
+; E counts how many characters were consumed.
 ScanUnsignedNumber:
-  ld hl, FormatBuf
   ld b, 0           ; BC is the result
   ld c, 0
   ld e, 0           ; E counts how many characters scanned
 .scan_digit:
-  ld a, [hli]       ; get next char of buffer
+  ld a, [hl]        ; get next char of buffer
   sub a, "0"
   ret c             ; < '0' is not a digit
   cp a, 10
@@ -301,7 +308,8 @@ ScanUnsignedNumber:
   ret nc            ; >= 'G' is not a digit
   add a, 10
 .digit
-  inc e             ; consume this character
+  inc hl            ; consume this character
+  inc e             ; count characters
   push af
   push hl
   ld a, [Radix]
@@ -317,6 +325,105 @@ ScanUnsignedNumber:
   cp a, 5           ; only scan up to 5 characters
   ret z
   jr .scan_digit
+
+; Scans the next word from [HL] into FormatBuf delimited by character C.
+;
+; Skips leading delims, then reads up to FORMAT_BUF_LEN non-delim characters.
+; If there are more than FORMAT_BUF_LEN characters in the word, skips any excess
+; characters until the next delim.
+;
+; Leaves HL at the first non-scanned character.
+EXPORT ScanWord
+ScanWord:
+  ld d, HIGH(FormatBuf)
+  ld e, LOW(FormatBuf)
+  ld b, 0
+.skip_leading_delims
+  ld a, [hl]
+  cp a, c
+  jr nz, .store_char  ; if not delim, done skipping
+  inc hl            ; consume delim
+  jr .skip_leading_delims
+.in_word
+  ld a, [hl]
+  cp a, c
+  jr z, .out        ; done scanning if we see a delim
+.store_char
+  cp a, END_SENTINEL
+  jr z, .out        ; if char is an end sentinel, stop scanning
+  ld [de], a        ; store next word char
+  inc de
+  inc hl            ; consume char
+  inc b             ; count it
+  ld a, b
+  cp a, FORMAT_BUF_LEN
+  jr nz, .in_word   ; if more capacity, keep scanning
+  ; if we ran out of buffer space in the middle of a word,
+  ; skip to the next delim
+.skip_excess_chars
+  ld a, [hl]
+  cp a, c
+  jr z, .out        ; if found delim, done now
+  cp a, END_SENTINEL
+  jr z, .out        ; if found end, done now
+  inc hl            ; consume extra word char
+  jr .skip_excess_chars
+.out
+  ld a, b
+  ld [WordLen], a
+  ret
+
+; Looks up word in FormatBuf in the dictionary. Assumes it is prefixed with
+; a length.
+;
+; Returns a pointer to the body of the dictionary entry in HL or 0 if not in
+; dictionary. Sets [WordFlags] to the corresponding length+flags for the entry.
+LookupWord:
+  ld a, [WordLen]
+  ld c, a           ; get target length in c
+  ld a, [Latest]    ; point hl at head of the dictionary
+  ld l, a
+  ld a, [Latest+1]
+  ld h, a
+  jr .check_next_word
+.no_match
+  pop hl            ; pop the next dictionary pointer
+.check_next_word
+  ld a, h           ; check if hl is nul now
+  or a, l
+  cp a, 0
+  ret z             ; nul pointer -> last word of list, not found
+  ld a, [hli]       ; get next pointer
+  ld e, a
+  ld a, [hli]
+  ld d, a
+  push de           ; push it
+  ld a, [hli]       ; get length+flags byte
+  ld [WordFlags], a ; stash flags in case 
+  and a, $1f        ; mask length
+  cp a, c           ; is length the same as input word length?
+  jr nz, .no_match  ; different length -> not the same word
+  ld de, FormatBuf
+  ld b, a           ; get length in b
+.compare_word
+  ld a, [de]        ; next char of input
+  cp a, [hl]        ; next char of dictionary
+  jr nz, .no_match  ; if char differs, does not match
+  inc de            ; advance input
+  inc hl            ; advance dictionary pointer
+  dec b             ; count char
+  jr nz, .compare_word ; continue comparing if more
+  ; We found a match. hl now points at the body of the word,
+  ; and [WordFlags] has the header flags.
+  pop de            ; discard next pointer
+  ret
+
+; Flag an error condition. Unwind the stack and bail.
+EXPORT Error
+Error:
+  ; TODO
+  halt
+  jr Error
 
 ; Multiplies BC by the 8-bit value in A.
 ; Returns product in BC. Clobbers HL.
@@ -779,7 +886,7 @@ StatInterrupt:
   reti
 
 Header:
-  db "(gbforth)"
+  db "( gbforth )"
 .End
 
 OnScreenKeyboard:
