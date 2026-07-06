@@ -145,6 +145,10 @@ the extra check does take 40 clock cycles of painful stack shuffling. Ugh.
 : (?DO) 2DUP = -ROT >R >R ;
 ```
 
+There are also backwards branching while loops. There's `BEGIN ... AGAIN`,
+`BEGIN ... UNTIL`, and `BEGIN ... WHILE ... REPEAT`. You can use `LEAVE` to
+break out of `DO ... LOOP` but you'd better not try it in a `BEGIN` loop.
+
 ### Strings
 
 There are two string conventions, an older one where string addresses point to a
@@ -164,28 +168,27 @@ This is both good and bad.
 into it. So far, so good. `IMMEDIATE` turns an entry (which one? `LATEST`) into
 a compile-time macro. Cool. Weird, but cool. And then there's more.
 
+- `CONSTANT` builds a new entry that pushes a literal.
+- `VARIABLE` builds a new entry that pushes an address where you can store some
+data.
+- `VALUE` builds a new entry that pushes a literal you can modify with `TO`.
+This is the "newer" version of `VARIABLE`.
+- `DEFER` builds a new entry whose action can later be dynamically set to some
+other entry's action using `IS` and queried with `ACTION-OF`.
 - `CREATE` builds a new entry that by default pushes its address. `DOES>`
 compiles code that the word should do, in addition to that.
-- `DEFER` builds a new entry that does nothing, but whose action can later be
-dynamically set to some other entry's action using `IS` and queried with
-`ACTION-OF`.
-- `CONSTANT` builds a new entry that returns a literal value.
-- `VARIABLE` builds a new entry that returns an address where you can store some
-data.
-- `VALUE` builds a new entry that returns a literal value you can modify with
-`TO`, instead of loading and storing from an address like a cave-dweller.
 
-You can probably code up some mind-bending bootleg object systems and
-abstractions with all that? But you have to really dig for explanations about
-_why_ they exist. It's all just in the standard with no context and forum
-threads with people arguing about ambiguities of how it works together.
+You can probably code up some object systems and abstractions with all that. But
+you have to really dig for explanations about _why_ they exist. It's all just in
+the standard with no context and forum threads with people arguing about
+ambiguities of how it works together.
 
 ### :NONAME
 
 `:NONAME ... ;` just spits out some code, and pushes an address you can use to
 call it. It does not put it in the dictionary. Except `;` has to work for both
 `: name` and `:noname`, so we need to keep track of that, somehow. And it has to
-work with `RECURSE`, the self-pointer for recurison (I think?)
+work with `RECURSE`, the self-pointer for recurison.
 
 This frees us from needing to name everything. This unbound lambda idea came
 about much later than the dictionary for Forth, so it doesn't compose cleanly.

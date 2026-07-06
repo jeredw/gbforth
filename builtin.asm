@@ -1672,7 +1672,13 @@ PatchTargets:
   call _HERE
   NEXT
 
-; UNTIL branches back to BEGIN.
+; AGAIN branches back to BEGIN.
+  DEFCODE "AGAIN", _AGAIN, FLAG_IMMEDIATE
+  call _BRANCH      ; stack will be ( ... -- begin-addr again-target )
+  call _STORE       ; stores begin-addr to again-target
+  NEXT
+
+; UNTIL conditionally branches back to BEGIN.
   DEFCODE "UNTIL", _UNTIL, FLAG_IMMEDIATE
   call _0BRANCH     ; stack will be ( ... -- begin-addr until-target )
   call _STORE       ; stores begin-addr to until-target
