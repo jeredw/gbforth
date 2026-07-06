@@ -911,13 +911,18 @@ ENDM
   ld a, d           ; check if length is zero
   or a, e
   jr z, .done       ; skip if zero length
-  ld a, 0
+  push hl           ; save stack pointer
+  ld h, b           ; get dest addr in hl
+  ld l, c
 .clear
-  ld [bc], a        ; set current addr to 0
-  inc bc            ; inc addr
+  xor a, a
+  ld [hli], a       ; set current addr to 0
   dec de            ; dec length
+  ld a, d           ; test if length is zero
+  or a, e
   jr nz, .clear     ; continue while length is nonzero
 .done
+  pop hl            ; restore stack pointer
   DROP              ; pop address
   NEXT
 
@@ -933,13 +938,110 @@ ENDM
   or a, e
   jr z, .done       ; skip if zero length
   pop af            ; set A=char (and clobber flags)
-.clear
-  ld [bc], a        ; set current addr to 0
-  inc bc            ; inc addr
+  push hl           ; save stack pointer
+  ld h, b           ; get dest addr in hl
+  ld l, c
+  ld b, a           ; get fill character in b
+.fill   
+  ld a, b           ; fill character in a
+  ld [hli], a       ; set current addr to a
   dec de            ; dec length
-  jr nz, .clear     ; continue while length is nonzero
+  ld a, d           ; test if length is zero
+  or a, e
+  jr nz, .fill      ; continue while length is nonzero
 .done
   DROP              ; pop address
+  NEXT
+
+; Copies memory from low to high address. ( c-addr1 c-addr2 u -- )
+  DEFCODE "CMOVE", _CMOVE, 0
+  ld a, c           ; stash length
+  ld [Temp], a
+  ld a, b
+  ld [Temp+1], a
+  ld a, [hld]       ; pop destination in de
+  ld d, a
+  ld a, [hld]
+  ld e, a
+  DROP              ; pop source into bc
+  push hl           ; save stack pointer
+  ld h, b           ; source to hl
+  ld l, c
+  ld a, [Temp]      ; get length in bc again
+  ld c, a
+  ld a, [Temp+1]
+  ld b, a
+.copy   
+  ld a, b           ; test if length is zero
+  or a, c
+  jr z, .done       ; if so, done
+  ld a, [hli]       ; get next source byte
+  ld [de], a        ; copy source to dest
+  inc de
+  dec bc
+  jr .copy          ; continue copying
+.done
+  pop hl            ; restore stack pointer
+  DROP              ; pop address
+  NEXT
+
+; Copies memory from high to low address. ( c-addr1 c-addr2 u -- )
+  DEFCODE "CMOVE>", _CMOVE_UP, 0
+  ld a, c           ; stash length
+  ld [Temp], a
+  ld a, b
+  ld [Temp+1], a
+  ld a, [hld]       ; de = destination + length
+  add a, c          ; add low byte of length
+  ld d, a
+  ld a, [hld]
+  adc a, b          ; add high byte of length
+  ld e, a
+  DROP              ; bc = source
+  push hl           ; save stack pointer
+  ld a, [Temp]      ; hl = source + length
+  add a, c
+  ld l, a
+  ld a, [Temp+1]
+  adc a, b
+  ld h, a
+  ld a, [Temp]      ; bc = length
+  ld c, a
+  ld a, [Temp]
+  ld b, a
+.copy   
+  ld a, b           ; test if length is zero
+  or a, c
+  jr z, .done       ; if so, done
+  ; dec before copying because ptr+length is one beyond the end.
+  dec hl            ; dec source pointer
+  dec de            ; dec dest pointer
+  ld a, [hl]        ; get source byte
+  ld [de], a        ; copy source to dest
+  dec bc
+  jr .copy          ; continue copying
+.done
+  pop hl            ; restore stack pointer
+  DROP              ; pop source address
+  NEXT
+
+; Copies memory. ( addr1 addr2 u -- )
+  DEFCODE "MOVE", _MOVE, 0
+  ; XXX All these stack shenanigans probably cost more than the copy itself...
+  call _M_ROT       ; ( addr1 addr2 u -- u addr1 addr2 )
+  call _OVER
+  call _OVER        ; ( -- u addr1 addr2 addr1 addr2 )
+  call _U_LESS_THAN ; test if source < dest
+  ld a, b
+  or a, c
+  DROP              ; pop test result
+  call _ROT         ; ( u addr1 addr2 -- addr1 addr2 u )
+  ; flags should still be ok, unaffected by DROP + ROT
+  jr nz, .move_up   ;
+  call _CMOVE       ; source >= dest so copy forwards
+  NEXT
+.move_up
+  call _CMOVE_UP    ; copy backwards
   NEXT
 
 ; Creates a new empty named dictionary definition. ( "<spaces>name" -- )
@@ -1169,6 +1271,7 @@ def VALUE_OFFSET   equ $5
 
 ; Counts how many bytes are in n1 cells. ( n1 -- n2 )
   DEFCODE "CELLS", _CELLS, 0
+  xor a             ; clear carry
   rl c              ; 1 cell = 2 bytes, so shift left
   rl b
   NEXT
@@ -1273,6 +1376,8 @@ def VALUE_OFFSET   equ $5
   inc bc            ; advance string pointer
   call PutChar      ; print char
   dec de            ; count char as printed
+  ld a, d           ; test if length is zero
+  or a, e
   jr nz, .print_next ; while more chars keep printing
   pop hl
   DROP              ; pop address

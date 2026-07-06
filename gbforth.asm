@@ -43,6 +43,8 @@ ScanPtr: dw         ; The next character of the program input to scan
 EXPORT ScanPtr
 Latest: dw          ; Points to the most recent dictionary entry
 EXPORT Latest
+Temp: dw            ; Temporary for sorting out stack messes
+EXPORT Temp
 WordFlags: db       ; Header of the current dictionary entry
 EXPORT WordFlags
 
