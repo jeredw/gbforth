@@ -846,6 +846,16 @@ ENDM
   ld c, e
   NEXT
 
+; Pushes a false value ( -- false )
+  DEFCODE "FALSE", _FALSE, 0
+  PUSH16 FALSE
+  NEXT
+
+; Pushes a true value ( -- true )
+  DEFCODE "TRUE", _TRUE, 0
+  PUSH16 TRUE
+  NEXT
+
 ; Pushes the address of the current base for digit conversion. ( -- addr )
   DEFCODE "BASE", _BASE, 0
   PUSH16 Base
@@ -1685,8 +1695,18 @@ PatchTargets:
 
 ; Compiles the setup code for an indexed do ... loop.
   DEFCODE "DO", _DO, FLAG_IMMEDIATE
-  PUSH16 _DO_RUNTIME  ; compile a call the do setup
+  PUSH16 _DO_RUNTIME  ; compile a call to the do setup
   call _COMPILE_COMMA
+  PUSH16 0          ; dummy to match ?DO stack
+  call _HERE        ; push target address for LOOP
+  PUSH16 0          ; push sentinel to indicate end of LEAVE chain
+  NEXT
+
+; Compiles the setup code for an indexed ?do ... loop.
+  DEFCODE "?DO", _QUESTION_DO, FLAG_IMMEDIATE
+  PUSH16 _QUESTION_DO_RUNTIME ; compile call to ?do setup and check
+  call _COMPILE_COMMA
+  call _0BRANCH     ; jump out of loop if check fails
   call _HERE        ; push target address for LOOP
   PUSH16 0          ; push sentinel to indicate end of LEAVE chain
   NEXT
@@ -1695,15 +1715,7 @@ PatchTargets:
   DEFCODE "LOOP", _LOOP, FLAG_IMMEDIATE
   PUSH16 1
   call _LITERAL     ; compile default loop increment
-  PUSH16 _LOOP_RUNTIME ; compile a call to the loop step
-  call _COMPILE_COMMA
-  ld a, [Here]      ; de = beyond loop
-  ld e, a
-  ld a, [Here+1]
-  ld d, a
-  call PatchTargets ; patch any LEAVE targets and pop sentinel
-  call _0BRANCH     ; ( ... -- do-addr loop-target )
-  call _STORE       ; stores do-addr to loop-target
+  call _PLUS_LOOP
   NEXT
 
 ; Compiles the backwards branch for an indexed do ... loop.
@@ -1711,12 +1723,32 @@ PatchTargets:
   PUSH16 _LOOP_RUNTIME ; compile a call to the plus loop step
   call _COMPILE_COMMA
   ld a, [Here]      ; de = beyond loop
+  add a, 3
   ld e, a
   ld a, [Here+1]
+  adc a, 0
   ld d, a
   call PatchTargets ; patch any LEAVE targets and pop sentinel
-  call _0BRANCH     ; ( ... -- do-addr loop-target )
+  call _0BRANCH     ; ( ... -- ?do-addr do-addr loop-target )
   call _STORE       ; stores do-addr to loop-target
+  ld a, b           ; test if ?do-addr is 0
+  or a, c
+  jr z, .out        ; skip if not a ?do loop
+  ld a, e
+  ld [bc], a        ; store beyond loop to ?do-addr branch 
+  inc bc
+  ld a, d
+  ld [bc], a
+.out
+  DROP              ; drop ?do-addr
+  NEXT
+
+; Escapes a do-loop or ?do-loop.
+  DEFCODE "LEAVE", _LEAVE, FLAG_IMMEDIATE
+  PUSH16 _UNLOOP    ; discard loop stuff
+  call _COMPILE_COMMA
+  ; This branch target will be patched by LOOP.
+  call _BRANCH      ; branch out of loop
   NEXT
 
 ; Runtime setup for DO. ( limit start -- )
@@ -1724,6 +1756,15 @@ PatchTargets:
   call _SWAP
   call _TO_R        ; R:( -- start ) 
   call _TO_R        ; R:( -- start limit )
+  NEXT
+
+; Check whether ?DO loop bounds are sane. ( limit start -- flag )
+  DEFCODE "(?DO)", _QUESTION_DO_RUNTIME, 0
+  call _2DUP        ; ( -- limit start limit start )
+  call _EQUALS      ; ( -- limit start flag )
+  call _M_ROT       ; ( -- flag limit start )
+  call _TO_R        ; R:( -- start ) ( -- flag limit )
+  call _TO_R        ; R:( -- start limit ) ( -- flag )
   NEXT
 
 ; Runtime stepping for LOOP and +LOOP.

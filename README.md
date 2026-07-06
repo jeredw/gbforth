@@ -133,7 +133,17 @@ writing down what everyone did for 50 years, and the result is not good.
 
 There is no provision for call frames or local variables _except_ for loop
 indices. `DO ... LOOP`, the standard `for` loop construct, basically requires
-hijacking the return stack to bootleg dynamic scope for its state.
+hijacking the return stack to bootleg dynamic scope for its state. To read the
+indices, you go spelunk on the return stack.
+
+Belatedly I have learned there is also `?DO ... LOOP`. The old non-? `DO` does
+not check if its start and end limits are already equal before looping, and will
+happily loop 65536 times if they are. Why would you want this behavior? Well,
+the extra check does take 40 clock cycles of painful stack shuffling. Ugh.
+
+```
+: (?DO) 2DUP = -ROT >R >R ;
+```
 
 ### Strings
 
@@ -195,3 +205,11 @@ Otherwise you get the stack. The stack sucks. It's just super confusing and bug
 prone. It takes like three brain cells to support infix expressions and local
 variables. Concatenative programming is... kind of cool I guess, but only in
 extremely small doses.
+
+Look, we have this CPU with 7 registers and really anemic addressing, and we're
+burning 4 registers to try to make a reasonably performant software stack. This
+is not an efficient way to program this machine. I just want to spill into RAM.
+
+### Printing things
+
+For the love of all that is holy, what is a pictured numeric output. Hoo boy.
