@@ -1,14 +1,14 @@
 # Gameboy Forth
 
 Gameboy Forth lets you use an onscreen keyboard to enter little Forth programs
-and run them on your Gameboy. This will be a boring symbolic Forth, although it
-might be fun to build a colorForth for Gameboy Color some day.
+and run them on your Gameboy. This will be a boring monochrome Forth, although
+it might be fun to build a colorForth for Gameboy Color some day.
 
 Programs are divided into pages of 32x32 characters or 1KB, since this fits
 nicely on one VRAM tilemap page. To save programs, we target an
 [MBC1](https://gbdev.io/pandocs/MBC1.html) cartridge with 8K of battery-backed
-save RAM, allowing for 8 full pages. On boot, if save RAM starts with
-`(gbforth)`, we preserve it, otherwise it is reset.
+save RAM, allowing for 8 full code pages. On boot, if save RAM starts with
+`( gbforth )`, we preserve it, otherwise it is reset.
 
 Forth runs as a REPL that scans one input key at a time and prints output
 immediately. This is not 100% true, since modern Forths are line buffered to
@@ -117,3 +117,81 @@ instead compile literals as
   call _DUP
   ld bc, XXXX
 ```
+
+## Complaints about Forth
+
+Forth is a weird mishmash of many generations of hacky metaprogramming stuff.
+It is at best confusing and at worst incoherent.
+
+While implementing a Forth, I had to understand the _what_ of the language.
+Searching online turned up confused hobbyist forum posts, strange textbooks from
+the 80s, and the truly cursed [ANS Forth standard](https://forth-standard.org/).
+I guess this standard had the impossible task of making sense of this mess by
+writing down what everyone did for 50 years, and the result is not good.
+
+### Loops
+
+There is no provision for call frames or local variables _except_ for loop
+indices. `DO ... LOOP`, the standard `for` loop construct, basically requires
+hijacking the return stack to bootleg dynamic scope for its state.
+
+### Strings
+
+There are two string conventions, an older one where string addresses point to a
+length byte prefixed to data, and a "newer" one where people pass around a data
+pointer and length separately. The older convention is baked into several
+standard system words so we're stuck with it. Otherwise I could avoid copying
+every single token during compilation!
+
+### Weird Dictionary Antics
+
+There is pretty much one program abstraction, the dictionary, and it's used for
+everything, procedures, variables, constants, macros, objects, etc. It's pretty
+much just a symbol table you can use to roll your own language however you want.
+This is both good and bad.
+
+`: name ... ;` builds a new dictionary entry named `name` and compiles some code
+into it. So far, so good. `IMMEDIATE` turns an entry (which one? `LATEST`) into
+a compile-time macro. Cool. Weird, but cool. And then there's more.
+
+- `CREATE` builds a new entry that by default pushes its address. `DOES>`
+compiles code that the word should do, in addition to that.
+- `DEFER` builds a new entry that does nothing, but whose action can later be
+dynamically set to some other entry's action using `IS` and queried with
+`ACTION-OF`.
+- `CONSTANT` builds a new entry that returns a literal value.
+- `VARIABLE` builds a new entry that returns an address where you can store some
+data.
+- `VALUE` builds a new entry that returns a literal value you can modify with
+`TO`, instead of loading and storing from an address like a cave-dweller.
+
+You can probably code up some mind-bending bootleg object systems and
+abstractions with all that? But you have to really dig for explanations about
+_why_ they exist. It's all just in the standard with no context and forum
+threads with people arguing about ambiguities of how it works together.
+
+### :NONAME
+
+`:NONAME ... ;` just spits out some code, and pushes an address you can use to
+call it. It does not put it in the dictionary. Except `;` has to work for both
+`: name` and `:noname`, so we need to keep track of that, somehow. And it has to
+work with `RECURSE`, the self-pointer for recurison (I think?)
+
+This frees us from needing to name everything. This unbound lambda idea came
+about much later than the dictionary for Forth, so it doesn't compose cleanly.
+It might be nicer if everything were `:NONAME` and binding names into the
+dictionary was a separate step.
+
+### Variables?
+
+There are only global variables, and there are two incompatible ways to define
+them, the obsolete way with `VARIABLE` and the new way with `VALUE`. They live
+in the same symbol table as everything else. So that's not great. It's fine for
+toy programs, but it's not great.
+
+### The stack
+
+Otherwise you get the stack. The stack sucks. It's just super confusing and bug
+prone. It takes like three brain cells to support infix expressions and local
+variables. Concatenative programming is... kind of cool I guess, but only in
+extremely small doses.

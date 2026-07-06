@@ -1,9 +1,19 @@
 SECTION "Forth Builtins", ROMX[$4000], BANK[1]
 
+def TRUE  equ $ffff
+def FALSE equ $0
+
+; Immediate words get executed during compilation instead of being compiled,
+; acting as macros.
 def FLAG_IMMEDIATE equ $80
+; Hidden words cannot be looked up. This is used to prevent a word from
+; referencing itself unintentionally during compilation.
+def FLAG_HIDDEN    equ $40
+EXPORT FLAG_HIDDEN
 
 ; Macro defcode creates a new dictionary entry in rom.
 def last_entry = 0
+EXPORT last_entry
 MACRO DEFCODE ; DEFCODE name, label, flags
   def new_last_entry = @
   dw  last_entry      ; Pointer to previous entry
@@ -19,10 +29,6 @@ MACRO NEXT
   ret
 ENDM
 
-; Exit pops back to the calling word.
-  DEFCODE "EXIT", _EXIT, 0
-  NEXT
-
 ; Parameter stack layout (we'll just call this "the stack")
 ;
 ; bc is the top element of the stack.
@@ -36,11 +42,19 @@ ENDM
 ; +-----+-----+
 ; |  0  |  1  | 1
 ; +-----+-----+
+; | -2  | -1  | -1 <-- base (sentinel)
+; +-----------+
 ; The stack grows up. We want to pop low-order bytes first for arithmetic, so
 ; elements are stored in big endian byte order.
+;
+; Initially the stack is empty, so hl points before the first entry,
+; and bc is undefined.
 
 ; Macro DROP pops the top of the stack, setting bc to second.
 ; This sequence is reused in several stack primitives.
+; If there's just one element on the stack, this will leave hl
+; pointed before the beginning of the stack and bc (top) will be
+; set to a sentinel value.
 MACRO DROP
   ld a, [hld]
   ld c, a
@@ -50,11 +64,19 @@ ENDM
 
 ; Macro DUP pushes the current top onto the stack.
 ; This sequence is reused in several stack primitives.
+; If the stack is empty, this puts whatever junk is in bc into
+; the first real stack slot.
 MACRO DUP
   inc hl
   ld a, b
   ld [hli], a
   ld [hl], c
+ENDM
+
+; Macro PUSH16 is a convenience to load a new top of stack.
+MACRO PUSH16
+  DUP
+  ld bc, \1
 ENDM
 
 ; Discards top of stack ( n -- )
@@ -89,9 +111,8 @@ ENDM
   ld e, a
   ld a, [hli]
   ld d, a
-  ; Push top as new second.
+  ; Push second as new top.
   DUP
-  ; Set top from saved second.
   ld b, d
   ld c, e
   NEXT
@@ -161,6 +182,76 @@ ENDM
   dec bc
   NEXT
 
+; Returns ones complement of a number. ( n1 -- n2 )
+  DEFCODE "INVERT", _INVERT, 0
+  ld a, c
+  cpl
+  ld c, a
+  ld a, b
+  cpl
+  ld b, a
+  NEXT
+
+; Negates a number. ( n1 -- n2 )
+  DEFCODE "NEGATE", _NEGATE, 0
+  call _INVERT
+  inc bc
+  NEXT
+
+; Max of two signed numbers ( n1 n2 -- n3 )
+  DEFCODE "MAX", _MAX, 0
+  ld a, [hld]       ; load de = n1^$8000
+  ld e, a
+  ld a, [hld]
+  xor $80
+  ld d, a
+  ld a, b           ; load bc = n2^$8000
+  xor $80
+  cp a, d           ; compare high bytes
+  jr c, .n1_gt_n2   ; if d > b, then n1 > n2
+  jr nz, .n1_le_n2
+  ld a, c           ; high bytes are equal
+  cp a, e           ; compare low bytes
+  jr c, .n1_gt_n2   ; if e > c, then n1 > n2
+.n1_le_n2
+  ld a, b           ; bc = n2 is already the max
+  xor $80           ; flip sign back
+  ld b, a
+  NEXT
+.n1_gt_n2
+  ld c, e           ; set bc from de (low byte)
+  ld a, d           ; invert and set high byte
+  xor $80           ; flip sign back
+  ld b, a
+  NEXT
+
+; Min of two signed numbers ( n1 n2 -- n3 )
+  DEFCODE "MIN", _MIN, 0
+  ld a, [hld]       ; load de = n1^$8000
+  ld e, a
+  ld a, [hld]
+  xor $80
+  ld d, a
+  ld a, b           ; load bc = n2^$8000
+  xor $80
+  cp a, d           ; compare high bytes
+  jr c, .n1_gt_n2   ; if d > b, then n1 > n2
+  jr nz, .n1_le_n2
+  ld a, c           ; high bytes are equal
+  cp a, e           ; compare low bytes
+  jr c, .n1_gt_n2   ; if e > c, then n1 > n2
+.n1_le_n2
+  ld c, e           ; set bc from de (low byte)
+  ld a, d           ; invert and set high byte
+  xor $80           ; flip sign back
+  ld b, a
+  NEXT
+.n1_gt_n2
+  ld a, b           ; bc = n2 is already the min
+  xor $80           ; flip sign back
+  ld b, a
+  NEXT
+
 ; Adds elements on stack ( n1 n2 -- sum )
   DEFCODE "+", _PLUS, 0
   ; Add low byte of second to low byte of top.
@@ -185,23 +276,222 @@ ENDM
   ld b, a
   NEXT
 
+; Equals zero ( x -- flag )
+  DEFCODE "0=", _ZERO_EQUALS, 0
+  ld a, b
+  or a, c
+  jr nz, .ne_zero   ; if some bit nonzero return false
+  ld bc, TRUE       ; else return true
+  NEXT
+.ne_zero
+  ld bc, FALSE
+  NEXT
+
+; Not equals zero ( x -- flag )
+  DEFCODE "0<>", _ZERO_NOT_EQUALS, 0
+  ld a, b
+  or a, c
+  jr z, .eq_zero    ; if all bits zero return false
+  ld bc, TRUE       ; else return true
+  NEXT
+.eq_zero
+  ld bc, FALSE
+  NEXT
+
+; Less than zero ( n -- flag )
+  DEFCODE "0<", _ZERO_LESS, 0
+  ; Returns true iff n < 0
+  bit 7, b
+  jr z, .positive   ; if sign bit zero return false
+  ld bc, TRUE       ; else return true
+  NEXT
+.positive
+  ld bc, FALSE
+  NEXT
+
+; Greater than zero ( n -- flag )
+  DEFCODE "0>", _ZERO_GREATER, 0
+  ; Returns true iff n > 0
+  ld a, b
+  or a, c
+  jr z, .le_zero    ; if all bits zero return false
+  bit 7, b
+  jr nz, .le_zero   ; if sign bit one return false
+  ld bc, TRUE       ; else return true
+  NEXT
+.le_zero
+  ld bc, FALSE
+  NEXT
+
+; Equals ( x1 x2 -- flag )
+  DEFCODE "=", _EQUALS, 0
+  ld a, [hld]
+  cp a, c           ; compare low byte of second with low byte of top
+  jr nz, .ne_dec    ; if not equal, return false
+  ld a, [hld]
+  cp a, b
+  jr nz, .ne        ; if not equal, return false
+  ld bc, TRUE       ; else return true
+  NEXT
+.ne_dec
+  dec hl
+.ne
+  ld bc, FALSE
+  NEXT
+
+; Not equals ( x1 x2 -- flag )
+  DEFCODE "<>", _NOT_EQUALS, 0
+  ld a, [hld]
+  cp a, c           ; compare low byte of second with low byte of top
+  jr nz, .ne_dec    ; if not equal, return true
+  ld a, [hld]
+  cp a, b
+  jr nz, .ne        ; if not equal, return true
+  ld bc, FALSE      ; else return false
+  NEXT
+.ne_dec
+  dec hl
+.ne
+  ld bc, TRUE 
+  NEXT
+
+; Tests if n1 is greater than n2 ( n1 n2 -- flag )
+  DEFCODE ">", _GREATER_THAN, 0
+  ld a, [hld]       ; load de = n1^$8000
+  ld e, a
+  ld a, [hld]
+  xor $80
+  ld d, a
+  ld a, b           ; load ac = n2^$8000
+  xor $80
+  cp a, d           ; compare high bytes
+  jr c, .n1_gt_n2   ; if d > a, then n1 > n2
+  jr nz, .n1_le_n2
+  ld a, c           ; high bytes are equal
+  cp a, e           ; compare low bytes
+  jr c, .n1_gt_n2   ; if e > c, then n1 > n2
+.n1_le_n2
+  ld bc, FALSE      ; no, not >
+  NEXT
+.n1_gt_n2
+  ld bc, TRUE       ; yes, >
+  NEXT
+
+; Tests if u1 is greater than u2 ( u1 u2 -- flag )
+  DEFCODE "U>", _U_GREATER_THAN, 0
+  ld a, [hld]       ; load de = n1
+  ld e, a
+  ld a, [hld]
+  ld d, a
+  ld a, b           ; bc is already n2
+  cp a, d           ; compare high bytes
+  jr c, .n1_gt_n2   ; if d > b, then n1 > n2
+  jr nz, .n1_le_n2
+  ld a, c           ; high bytes are equal
+  cp a, e           ; compare low bytes
+  jr c, .n1_gt_n2   ; if e > c, then n1 > n2
+.n1_le_n2
+  ld bc, FALSE      ; no, not >
+  NEXT
+.n1_gt_n2
+  ld bc, TRUE       ; yes, >
+  NEXT
+
+; Tests if n1 is less than n2 ( n1 n2 -- flag )
+  DEFCODE "<", _LESS_THAN, 0
+  ld a, b           ; load bc = n2^$8000
+  xor $80
+  ld b, a
+  ld a, [hld]       ; load de = n1^$8000
+  ld e, a
+  ld a, [hld]
+  xor $80
+  cp a, b           ; compare high bytes
+  jr c, .n1_lt_n2   ; if b > d, then n2 > n1
+  jr nz, .n1_ge_n2
+  ld a, e           ; high bytes are equal
+  cp a, c           ; compare low bytes
+  jr c, .n1_lt_n2   ; if c > e, then n2 > n1
+.n1_ge_n2
+  ld bc, FALSE      ; no, not <
+  NEXT
+.n1_lt_n2
+  ld bc, TRUE       ; yes, <
+  NEXT
+
+; Tests if u1 is less than u2 ( u1 u2 -- flag )
+  DEFCODE "U<", _U_LESS_THAN, 0
+  ; bc = u2 already
+  ld a, [hld]       ; load de = u1
+  ld e, a
+  ld a, [hld]
+  cp a, b           ; compare high bytes
+  jr c, .n1_lt_n2   ; if b > d, then n2 > n1
+  jr nz, .n1_ge_n2
+  ld a, e           ; high bytes are equal
+  cp a, c           ; compare low bytes
+  jr c, .n1_lt_n2   ; if c > e, then n2 > n1
+.n1_ge_n2
+  ld bc, FALSE      ; no, not <
+  NEXT
+.n1_lt_n2
+  ld bc, TRUE       ; yes, <
+  NEXT
+
+; Logical ORs second with top ( x1 x2 -- x3 )
+  DEFCODE "OR", _OR, 0
+  ld a, [hld]
+  or a, c
+  ld c, a
+  ld a, [hld]
+  or a, b
+  ld b, a
+  NEXT
+
+; Logical ANDs second with top ( x1 x2 -- x3 )
+  DEFCODE "AND", _AND, 0
+  ld a, [hld]
+  and a, c
+  ld c, a
+  ld a, [hld]
+  and a, b
+  ld b, a
+  NEXT
+
+; Logical XOR second with top ( x1 x2 -- x3 )
+  DEFCODE "XOR", _XOR, 0
+  ld a, [hld]
+  xor a, c
+  ld c, a
+  ld a, [hld]
+  xor a, b
+  ld b, a
+  NEXT
+
 ; Pop parameter stack and push return stack.
   DEFCODE ">R", _TO_R, 0
-  push bc
+  ; Push the value "under" the >R stack frame.
+  pop de            ; save >R caller address
+  push bc           ; push data
   DROP
+  push de           ; push caller again + ret
   NEXT
 
 ; Pop return stack and push onto parameter stack.
   DEFCODE "R>", _R_FROM, 0
+  pop de            ; save R> caller address
   DUP
-  pop bc
+  pop bc            ; pop data
+  push de           ; push caller again + ret
   NEXT
 
 ; Copy x from the return stack to the parameter stack.
   DEFCODE "R@", _R_FETCH, 0
-  DUP
+  pop de            ; save R@ caller address
+  DUP               ; push data onto data stack
   pop bc
   push bc
+  push de           ; push caller again + ret
   NEXT
 
 ; Scans a word delimited by the character at the top of the stack
@@ -221,34 +511,1285 @@ ENDM
   ld a, h
   ld [ScanPtr+1], a
   pop hl
-  ; Replace top of stack with length-prefixed word.
+  ; Replace top of stack (delimiter) with length-prefixed word pointer.
   ld bc, WordLen
+  NEXT
+
+; Scans until it finds delimiter char. Returns start address and length
+; ( char "ccc<char>" -- c-addr u )
+  DEFCODE "PARSE", _PARSE, 0
+  ld d, 0           ; count length from 0
+  ld e, c           ; save delimiter character in E
+  push hl           ; save stack pointer
+  ; HL = the next input buffer position
+  ld a, [ScanPtr]
+  ld l, a
+  ld a, [ScanPtr+1]
+  ld h, a
+  ld b, h           ; clobber char with start position
+  ld c, l
+.scan_next_char
+  ld a, [hl]        ; read character from input
+  inc hl            ; advance input pointer
+  cp a, e           ; is it the delimiter?
+  jr z, .done       ; if delim, we are done scanning
+  cp a, END_SENTINEL
+  jp z, Error       ; if we hit eof in a string, error
+  inc d             ; inc length
+  jr .scan_next_char
+.done
+  ; Save scan position.
+  ld a, l
+  ld [ScanPtr], a
+  ld a, h
+  ld [ScanPtr+1], a
+  pop hl            ; restore stack pointer
+  DUP               ; push length
+  ld b, 0           ; (saved in d)
+  ld c, d
+  NEXT
+
+; Scans a number and returns it. ( "digits" -- n )
+; If there is no number here, errors.
+  DEFCODE "NUMBER", _NUMBER, 0
+  DUP               ; make space to push result
+  push hl
+  ; HL = the next input buffer position
+  ld a, [ScanPtr]
+  ld l, a
+  ld a, [ScanPtr+1]
+  ld h, a
+  call ScanUnsignedNumber
+  ; Save scan position.
+  ld a, l
+  ld [ScanPtr], a
+  ld a, h
+  ld [ScanPtr+1], a
+  pop hl
+  ld a, e
+  cp a, 0           ; no chars consumed means not a number
+  jp z, Error
+  NEXT
+
+; Parses a word and then returns its first character.
+  DEFCODE "CHAR", _CHAR, 0
+  PUSH16 " "
+  call _WORD        ; scan the next space delimited word
+  ld a, [WordLen+1]
+  DUP               ; push the first character
+  ld b, 0
+  ld c, a
+  NEXT
+
+; Parses a word and generates code to return its first character.
+; Only makes sense at compile time.
+  DEFCODE "[CHAR]", _BRACKET_CHAR, FLAG_IMMEDIATE
+  call _CHAR
+  call _LITERAL
   NEXT
 
 ; Comments with '(' and ')'.
   DEFCODE "(", _OPEN_PAREN, FLAG_IMMEDIATE
-  push bc
-.skip_comment
-  ld c, " "
-  call _WORD        ; scan forward using space as delim
-  ld a, [bc]        ; get length of word
-  cp a, 0           ; length 0 means we hit eof
-  jp z, Error       ; eof while scanning comment
-  cp a, 1           ; ')' is length 1
-  jr nz, .skip_comment ; if not length 1 continue skipping
-  inc bc            ; point to word itself
-  ld a, [bc]
-  cp a, ")"         ; end of comment?
-  jr nz, .skip_comment ; if not end comment, keep skipping
-  pop bc
+  PUSH16 ")"
+  call _PARSE       ; scan forward til close paren
+  DROP              ; discard start address and length
+  DROP
   NEXT
+
+; Scans a non-counted string and compiles code to push its address and length.
+; Also works ok while interpreting since it's nice to be able to print...
+; Assumes desired delimiter is on the stack.
+  DEFCODE "S?", _S_DELIM, FLAG_IMMEDIATE
+  call _PARSE       ; push string pointer and length
+  ld a, [State]
+  jr z, .out        ; if interpreting, just leave stuff on the stack
+  call _SWAP        ; swap them so we can push pointer first
+  call _LITERAL     ; append code to push string pointer
+  call _LITERAL     ; append code to push length
+.out
+  NEXT
+
+; Scans a string delimited by "" and compiles code to push its address and length.
+  DEFCODE "S\"", _S_QUOTE, FLAG_IMMEDIATE
+  PUSH16 "\""
+  call _S_DELIM     ; scan forward to " and find 
+  NEXT
+
+; Scans a string delimited by () and compiles code to print it.
+  DEFCODE ".(", _DOT_PAREN, FLAG_IMMEDIATE
+  PUSH16 ")"
+  call _S_DELIM     ; scan forward to ) delimiter, and generate pushes
+  ld a, [State]
+  jr nz, .compiling
+  call _TYPE        ; if interpreting, print immediately
+  NEXT
+.compiling
+  PUSH16 _TYPE      ; generate code to call TYPE
+  call _COMPILE_COMMA
+  NEXT
+
+; Scans a string delimited by " and compiles code to print it.
+  DEFCODE ".\"", _DOT_QUOTE, FLAG_IMMEDIATE
+  call _S_QUOTE     ; generate code to push an address and length
+  ld a, [State]
+  jr nz, .compiling
+  call _TYPE        ; if interpreting, print immediately
+  NEXT
+.compiling
+  PUSH16 _TYPE
+  call _COMPILE_COMMA ; generate code to call TYPE
+  NEXT
+
+; Scans a counted string and compiles code to push its address.
+; Since we don't want to corrupt source code, we copy counted strings and
+; prepend a length byte. This is kind of annoying.
+  DEFCODE "C\"", _C_QUOTE, FLAG_IMMEDIATE
+  call _HERE        ; get output pointer
+  push hl           ; save stack pointer
+  ; Append a jp that will jump over the string data.
+  ld a, $c3         ; jp instruction
+  ld [bc], a        ; append instruction
+  inc bc            ;
+  push bc           ; save address of jp target
+  inc bc            ; skip over target
+  inc bc
+  push bc           ; save address of length field
+  inc bc            ; skip length field
+  ; HL = the next input buffer position
+  ld a, [ScanPtr]
+  ld l, a
+  ld a, [ScanPtr+1]
+  ld h, a
+  ld d, 0           ; d = length counts from 0
+.scan_next_char
+  ld a, [hl]        ; read character from input
+  inc hl            ; advance input pointer
+  cp a, "\""        ; is it a close quote?
+  jr z, .done       ; if quote, we are done scanning
+  cp a, END_SENTINEL
+  jp z, Error       ; if we hit eof in a string, error
+  ld [bc], a        ; store the character
+  inc bc            ; next output position
+  inc d             ; inc length
+  jr .scan_next_char
+.done
+  ; Save scan position.
+  ld a, l
+  ld [ScanPtr], a
+  ld a, h
+  ld [ScanPtr+1], a
+  ; Save here.
+  ld a, c
+  ld [Here], a
+  ld a, b
+  ld [Here+1], a
+  pop bc            ; point at length field
+  ld a, d
+  ld [bc], a        ; update length
+  pop bc            ; point at jp target
+  ld a, [Here]      ; set jp to jump over string
+  ld [bc], a
+  inc bc
+  ld a, [Here+1]
+  ld [bc], a
+  inc bc            ; point bc at length field again
+  pop hl            ; restore stack pointer
+  ; Now the top of the stack points at the length field.
+  call _LITERAL
+  NEXT
+
+; Finds a word in the dictionary and returns a pointer to it.
+; ( c-addr -- c-addr 0 | xt 1 | xt -1 )
+  DEFCODE "FIND", _FIND, 0
+  push hl
+  push bc
+  ; BC has the word pointer to find.
+  call LookupWord
+  cp a, 0
+  jr z, .not_found  ; 0 -> word is not found
+  ld b, h           ; set top of stack to result pointer
+  ld c, l
+  pop de            ; discard c-addr
+  pop hl            ; restore stack pointer
+  and a, FLAG_IMMEDIATE
+  jr nz, .immediate ; test if immediate flag set
+  ; otherwise word is compiled
+.compiled
+  PUSH16 -1         ; -1 for compiled words
+  jr .out
+.immediate
+  PUSH16 1          ; 1 for immediate words
+  jr .out
+.not_found
+  pop bc            ; restore c-addr
+  pop hl            ; restore stack pointer
+  PUSH16 0          ; 0 for not found
+.out
+  NEXT
+
+; Finds a space delimited word ( "<spaces>name" -- xt )
+  DEFCODE "'", _TICK, 0
+  PUSH16 " "
+  call _WORD        ; scan the next word of input
+  ld a, [bc]        ; get length of the word
+  cp a, 0           ; 
+  jp z, Error       ; eof after ' is always an error
+  call _FIND        ; try to look up the word
+  ld a, c           ; get lookup result flags
+  cp a, 0           ; 0 means not found
+  jp z, Error       ; missing word after ' is an error
+  DROP              ; drop flags from find leaving xt on stack
+  NEXT
+
+; Macro to find and push the address of the next word ( "<spaces>name" -- xt )
+  DEFCODE "[']", _BRACKET_TICK, FLAG_IMMEDIATE
+  call _TICK        ; look up the word
+  call _LITERAL     ; compile code to push a literal
+  NEXT
+
+; Delays compilation of ( "<spaces>name" ).
+; This is useful for deferring execution when defining macros.
+  DEFCODE "POSTPONE", _POSTPONE, FLAG_IMMEDIATE
+  call _TICK        ; lookup the word
+  ld a, [WordFlags] ; get associated flags
+  and a, FLAG_IMMEDIATE
+  jr z, .compiled   ; if not immediate, compiled
+  ; POSTPONE <immediate> just compiles a call instead of executing it now.
+  ; Say we want to alias MAYBE to IF for some reason:
+  ; : MAYBE POSTPONE IF ; IMMEDIATE
+  ;   \ Since IF is immediate, MAYBE compiles to: call _IF
+  ; : STUFF MAYBE TRUE THEN ;
+  ;   \ When compiling STUFF, we run MAYBE which calls _IF.
+  ;   \ Had we written IF instead of POSTPONE IF, we would have
+  ;   \ called IF during the definition of MAYBE.
+  call _COMPILE_COMMA ; compile a call to WORD
+  NEXT
+.compiled
+  ; POSTPONE <compiled> appends code to compile a call to a word.
+  ; For example say we want a macro to add a call to dup.
+  ; : COMPILE-DUP POSTPONE DUP ; IMMEDIATE
+  ;   \ COMPILE-DUP compiles to: [push _DUP] [COMPILE,]
+  ; : MY-DUP COMPILE-DUP ;
+  ;   \ When compiling MY-DUP, we run COMPILE-DUP which appends
+  ;   \ a call to DUP. Had we written DUP instead of POSTPONE DUP,
+  ;   \ we would have called DUP during the definition of MY-DUP.
+  call _LITERAL     ; compile push xt
+  PUSH16 _COMPILE_COMMA ; compile call to COMPILE,
+  call _COMPILE_COMMA
+  NEXT
+
+; Compiles code to put a literal on the stack ( x -- )
+  DEFCODE "LITERAL", _LITERAL, FLAG_IMMEDIATE
+  ; Compile call DUP / ld bc, XXXX to implement the PUSH16 sequence.
+  PUSH16 _DUP       ; call DUP
+  call _COMPILE_COMMA
+  ld e, $01         ; append "ld bc, XXXX"
+  call AppendCode
+  DROP
+  NEXT
+
+; >BODY finds the beginning of data for a dictionary entry ( xt -- addr )
+  DEFCODE ">BODY", _TO_BODY, 0
+  inc bc            ; skip previous entry pointer
+  inc bc
+  ld a, [bc]        ; read name length
+  and a, $3f        ; mask length bytes
+  add a, c          ; add length to pointer
+  ld c, a
+  ld a, b
+  adc 0
+  ld b, a
+  NEXT
+
+; Pushes a blank character. ( -- char )
+  DEFCODE "BL", _BL, 0
+  PUSH16 " "
+  NEXT
+
+; Returns the length and first character of a length-prefixed string. ( addr -- addr u )
+  DEFCODE "COUNT", _COUNT, 0
+  ld a, [bc]        ; read length
+  ld d, a           ; save length to D
+  inc bc            ; get string data address
+  DUP               ; push length
+  ld b, 0
+  ld c, d
+  NEXT
+
+; Sets radix to decimal. ( -- )
+  DEFCODE "DECIMAL", _DECIMAL, 0
+  ld a, 10
+  ld [Base], a
+  NEXT
+
+; Sets radix to hex. ( -- )
+  DEFCODE "HEX", _HEX, 0
+  ld a, 16
+  ld [Base], a
+  NEXT
+
+; Reports depth of data stack. ( -- n )
+  DEFCODE "DEPTH", _DEPTH, 0
+  ; The stack pointer is at -1 when the stack is empty.
+  ; So its current depth is hl - (ParameterStack-1).
+  ld a, l
+  sub LOW(ParameterStack-1)
+  ld e, a
+  ld a, h
+  sbc HIGH(ParameterStack-1)
+  ld d, a
+  xor a, a          ; clear carry
+  rr d              ; shift right to divide by 2 (bytes -> cells)
+  rr e
+  DUP               ; push depth
+  ld b, d
+  ld c, e
+  NEXT
+
+; Pushes the address of the current base for digit conversion. ( -- addr )
+  DEFCODE "BASE", _BASE, 0
+  PUSH16 Base
+  NEXT
+
+; Pushes address of compilation state. ( -- addr )
+  DEFCODE "STATE", _STATE, 0
+  PUSH16 State
+  NEXT
+
+; Pushes the current data location. ( -- addr )
+  DEFCODE "HERE", _HERE, 0
+  DUP
+  ld a, [Here]
+  ld c, a
+  ld a, [Here+1]
+  ld b, a
+  NEXT
+
+; Pushes the latest entry pointer. ( -- addr )
+  DEFCODE "LATEST", _LATEST, 0
+  DUP
+  ld a, [Latest]
+  ld c, a
+  ld a, [Latest+1]
+  ld b, a
+  NEXT
+
+; Reserves data space. ( n -- )
+  DEFCODE "ALLOT", _ALLOT, 0
+  ld a, [Here]      ; add top of stack to Here pointer
+  add a, c
+  ld [Here], a
+  ld a, [Here+1]
+  adc a, b
+  ld [Here+1], a
+  DROP
+  NEXT
+
+; Aligns data space pointer. ( -- )
+  DEFCODE "ALIGN", _ALIGN, 0 
+  ld a, [Here]
+  bit 0, a          ; check if Here pointer is cell-aligned
+  jr z, .out        ; if so, ok
+  PUSH16 1          ; otherwise allocate one byte to align it
+  call _ALLOT
+.out
+  NEXT
+
+; Gets next aligned address. ( addr -- a-addr )
+  DEFCODE "ALIGNED", _ALIGNED, 0 
+  bit 0, c          ; test if aligned
+  jr z, .out        ; if aligned, do nothing
+  inc bc            ; otherwise increment...
+.out
+  NEXT
+
+; Erases memory. ( addr u -- )
+  DEFCODE "ERASE", _ERASE, 0
+  ld d, b           ; pop length in de
+  ld e, c
+  DROP
+  ld a, d           ; check if length is zero
+  or a, e
+  jr z, .done       ; skip if zero length
+  ld a, 0
+.clear
+  ld [bc], a        ; set current addr to 0
+  inc bc            ; inc addr
+  dec de            ; dec length
+  jr nz, .clear     ; continue while length is nonzero
+.done
+  DROP              ; pop address
+  NEXT
+
+; Fills memory with some value. ( addr u char -- )
+  DEFCODE "FILL", _FILL, 0
+  ld b, c           ; duplicate char in high byte of bc
+  push bc           ; push char
+  DROP
+  ld d, b           ; pop length in de
+  ld e, c
+  DROP
+  ld a, d           ; check if length is zero
+  or a, e
+  jr z, .done       ; skip if zero length
+  pop af            ; set A=char (and clobber flags)
+.clear
+  ld [bc], a        ; set current addr to 0
+  inc bc            ; inc addr
+  dec de            ; dec length
+  jr nz, .clear     ; continue while length is nonzero
+.done
+  DROP              ; pop address
+  NEXT
+
+; Creates a new empty named dictionary definition. ( "<spaces>name" -- )
+  DEFCODE "(CREATE-EMPTY)", _CREATE_EMPTY, 0
+  PUSH16 " "
+  call _WORD        ; scan the next word of input
+  ld a, [bc]        ; get length of the word
+  ld d, a           ; save it in d
+  cp a, 0           ; test if zero -> eof
+  jp z, Error       ; eof after CREATE is always an error
+  push hl           ; save stack pointer
+  ld a, [Here+1]    ; get current here pointer
+  ld h, a
+  ld a, [Here]
+  ld l, a
+  bit 0, l          ; check if here is cell-aligned
+  jr z, .aligned
+  inc hl            ; if not aligned, align it
+.aligned
+  push hl           ; save start of entry pointer
+  ld a, [Latest]    ; copy link to previous word
+  ld [hli], a
+  ld a, [Latest+1]
+  ld [hli], a
+  ld a, d           ; copy length of name
+  ld [hli], a
+.copy_name
+  inc bc
+  ld a, [bc]        ; load next char of name
+  ld [hli], a       ; store next char of name
+  dec d
+  jr nz, .copy_name ; while more chars remain, keep copying
+  ld a, l           ; update HERE
+  ld [Here], a
+  ld a, h
+  ld [Here+1], a
+  pop hl            ; set HL to start of entry
+  ld a, l           ; update LATEST
+  ld [Latest], a
+  ld a, h
+  ld [Latest+1], a
+  pop hl            ; restore stack
+  DROP
+  NEXT
+
+; Creates a new named dictionary definition with default behavior. ( "<spaces>name" -- )
+; The default behavior of name is to push its first free address.
+  DEFCODE "CREATE", _CREATE, 0
+  call _CREATE_EMPTY
+  ; Behavior for the newly created word is to push its data address,
+  ; jp to optional DOES>, and return. Any data is stored after ret.
+  ; By default YYYY is the following instruction, i.e. the jp just
+  ; falls through to exit.
+  ;   call _DUP     ; CD <_DUP> +3 bytes
+  ;   ld bc, XXXX   ; 01 <XXXX> +3 bytes
+  ;   jp YYYY       ; C3 <YYYY> +3 bytes
+  ;   ret           ; C9        +1 byte
+  ;   <padding>     ; (if needed for alignment)
+  ;   <aligned data goes here at +10B/+11B>
+  call _HERE        ; get current address
+  ld a, c           ; compute find ret address
+  add a, 9
+  ld c, a
+  ld a, b
+  adc a, 0
+  ld b, a
+  DUP               ; save ret address for later
+  inc bc            ; data goes after ret
+  call _ALIGNED     ; align data address if necessary
+  call _LITERAL     ; append code to push data address
+  ; _LITERAL popped data address, so now bc is the ret address again
+  ld e, $c3         ; jp opcode
+  call AppendCode   ; append "jp YYYY"
+  ld bc, $c9        ; clobber top of stack with ret opcode
+  call _C_COMMA     ; append "ret" (and pop stack)
+  NEXT
+
+; How far into a CREATE word is the pointer we need to patch up for DOES>.
+def DOES_OFFSET    equ $7
+
+; DOES> appends common behavior to the most recent CREATE'd entry.
+  DEFCODE "DOES>", _DOES, FLAG_IMMEDIATE
+  ; Assume that we've just compiled code to call CREATE. Now we
+  ; need to compile code to patch up the DOES pointer in the newly
+  ; created entry. Note we want this to happen when CREATE executes,
+  ; at runtime.
+  PUSH16 _DOES_RUNTIME
+  call _COMPILE_COMMA
+  ; Return early from the current definition. The remainder of its code
+  ; from HERE+1 onwards will be used as the behavior for DOES>.
+  PUSH16 $c9        ; ret opcode
+  call _C_COMMA     ; append ret
+  NEXT
+
+; Patches the DOES pointer in the LATEST entry. See CREATE and DOES>.
+  DEFCODE "(DOES>)", _DOES_RUNTIME, 0
+  call _HERE        ; HERE will be a ret in the current definition
+  inc bc            ; the DOES code is just past the ret
+  call _LATEST      ; we need to store this in the LATEST entry
+  call _TO_BODY     ; skip past the header
+  PUSH16 DOES_OFFSET
+  call _PLUS        ; skip to the offset of the DOES pointer
+  call _STORE       ; store HERE+1 into the DOES pointer
+  NEXT
+
+; DEFER defines a new entry that can be aliased to another one.
+; We don't have dedicated fancy fields for this and just do it with a JP.
+  DEFCODE "DEFER", _DEFER, 0
+  call _CREATE_EMPTY
+  ; Behavior for the newly created word is to jp to optional ACTION.
+  ;   jp YYYY       ; C3 <YYYY> +3 bytes
+  ;   ret           ; C9        +1 byte
+  ; By default YYYY is the following instruction, i.e. the jp just
+  ; falls through to exit.
+  call _HERE        ; push here pointer
+  inc bc            ; skip over jp itself to get to ret
+  inc bc
+  inc bc
+  ld e, $c3         ; jp opcode
+  call AppendCode   ; append "jp YYYY"
+  ld bc, $c9        ; clobber top of stack with ret opcode
+  call _C_COMMA     ; append "ret" (and pop)
+  NEXT
+
+; DEFER! sets the ACTION pointer of xt1 to be xt2 ( xt2 xt1 -- )
+  DEFCODE "DEFER!", _DEFER_STORE, 0
+  ld d, b           ; save address of word to modify
+  ld e, c
+  inc de            ; point at the jp target
+  DROP              ; pop to get bc = xt2
+  ld a, [bc]        ; copy xt2 to action address
+  ld [de], a
+  inc bc
+  inc de
+  ld a, [bc]
+  ld [de], a
+  DROP
+  NEXT
+
+; DEFER@ gets the ACTION pointer of xt1 ( xt1 -- xt2 )
+  DEFCODE "DEFER@", _DEFER_FETCH, 0
+  inc bc            ; point at the jp target
+  ld a, [bc]        ; copy low byte of xt2 to e
+  ld e, a
+  inc bc
+  ld a, [bc]        ; copy high byte of xt2 to b
+  ld b, a
+  ld c, d
+  NEXT
+
+; IS sets a name to execute xt. ( xt "<spaces>name" -- )
+  DEFCODE "IS", _IS, FLAG_IMMEDIATE
+  ld a, [State]
+  jr nz, .compiling
+  call _TICK        ; look up the next word
+  call _DEFER_STORE ; set jp target in defer definition
+  NEXT
+.compiling
+  call _BRACKET_TICK ; compile code to push xt
+  PUSH16 _DEFER_STORE ; compile DEFER!
+  call _COMPILE_COMMA
+  NEXT
+
+; ACTION-OF returns the action of a deferred word. ( "<spaces>name" -- xt )
+  DEFCODE "ACTION-OF", _ACTION_OF, FLAG_IMMEDIATE
+  ld a, [State]
+  jr nz, .compiling
+  call _TICK        ; look up the next word
+  call _DEFER_FETCH ; get target in defer definition
+  NEXT
+.compiling
+  call _BRACKET_TICK ; compile code to push xt
+  PUSH16 _DEFER_FETCH ; compile DEFER@
+  call _COMPILE_COMMA
+  NEXT
+
+; Creates a new entry that loads a literal value. ( x -- )
+  DEFCODE "CONSTANT", _CONSTANT, 0
+  call _CREATE_EMPTY ; create a new, empty dictionary entry
+  call _LITERAL     ; compile code to push x
+  DUP               ; push ret opcode
+  ld bc, $c9
+  call _C_COMMA     ; append "ret" (and pop)
+  NEXT
+
+; Creates a new entry that pushes an address for some aligned data. ( -- addr )
+  DEFCODE "VARIABLE", _VARIABLE, 0
+  call _CREATE_EMPTY ; create a new, empty dictionary entry
+  call _ALIGN       ; align to cell boundary
+  call _HERE        ; push address
+  PUSH16 1          ; reserve one cell for value
+  call _ALLOT
+  call _LITERAL     ; append code to push variable address
+  ld bc, $c9
+  call _C_COMMA     ; append "ret" (and pop)
+  NEXT
+
+; Creates a new entry that loads a modifiable literal value. ( x "<spaces>name" -- )
+  DEFCODE "VALUE", _VALUE, 0
+  ; Values are just constants that we intrusively modify.
+  call _CONSTANT
+  NEXT
+
+; How far into a VALUE word is the actual value for TO.
+; It is after a literal field: call DUP / ld bc, XXXX
+def VALUE_OFFSET   equ $5
+
+; Modifies the value stored in a VALUE entry.
+  DEFCODE "TO", _TO_, 0
+  ld a, [State]
+  jr nz, .compiling
+  call _TO_RUNTIME
+  NEXT
+.compiling
+  PUSH16 _TO_RUNTIME
+  call _COMPILE_COMMA
+  NEXT
+
+; Does the runtime part of a TO 
+  DEFCODE "(TO)", _TO_RUNTIME, 0
+  call _TICK        ; look up entry  
+  call _TO_BODY     ; skip ahead to the body
+  PUSH16 VALUE_OFFSET
+  call _PLUS        ; skip into literal
+  call _STORE       ; store x to literal
+  NEXT
+
+; Counts how many bytes are in n1 cells. ( n1 -- n2 )
+  DEFCODE "CELLS", _CELLS, 0
+  rl c              ; 1 cell = 2 bytes, so shift left
+  rl b
+  NEXT
+
+; Increments address by one cell. ( addr1 -- addr2 )
+  DEFCODE "CELL+", _CELL_PLUS, 0
+  inc bc            ; 1 cell = 2 bytes.
+  inc bc
+  NEXT
+
+; Counts how many chars are in n1 cells. ( n1 -- n2 )
+  DEFCODE "CHARS", _CHARS, 0
+  ; no-op because chars are 1:1
+  NEXT
+
+; Increments address by one char. ( addr1 -- addr2 )
+  DEFCODE "CHAR+", _CHAR_PLUS, 0
+  inc bc
+  NEXT
+
+; Stores the top of stack at HERE and increments HERE. ( x -- )
+  DEFCODE ",", _COMMA, 0
+  push hl           ; save stack pointer
+  ld a, [Here]      ; load Here pointer into hl
+  ld l, a
+  ld a, [Here+1]
+  ld h, a
+  ld a, c
+  ld [hli], a       ; store low byte at pointer
+  ld a, b
+  ld [hli], a       ; store high byte at pointer
+  ld a, l
+  ld [Here], a      ; update Here pointer
+  ld a, h
+  ld [Here+1], a
+  pop hl            ; restore stack pointer
+  DROP
+  NEXT
+
+; Appends code to execute the given word address at HERE. ( xt -- )
+  DEFCODE "COMPILE,", _COMPILE_COMMA, 0
+  ld e, $cd         ; $cd is a call instruction
+  call AppendCode   ; append "CALL XXXX" with XXXX from top of stack
+  DROP
+  NEXT
+
+; Executes the word address on the stack. ( xt -- )
+  DEFCODE "EXECUTE", _EXECUTE, 0
+  ld a, c           ; load the address into a prepared CALL in ram
+  ld [Indirect+1], a
+  ld a, b
+  ld [Indirect+2], a
+  DROP              ; drop xt
+  call Indirect     ; execute and then return here
+  NEXT
+
+; Exits the current word ( -- )
+  DEFCODE "EXIT", _EXIT, 0
+  ; pop the return address for the call to EXIT, so that NEXT (ret) returns to
+  ; the containing word's caller.
+  pop de
+  NEXT
+
+; Prints a signed number. ( n -- )
+  DEFCODE ".", _DOT, 0
+  push hl
+  push bc
+  call PutSignedNumber
+  ld a, " "
+  call PutChar
+  pop bc
+  pop hl
+  NEXT
+
+; Prints an unsigned number. ( u -- )
+  DEFCODE "U.", _U_DOT, 0
+  push hl
+  push bc
+  call PutUnsignedNumber
+  ld a, " "
+  call PutChar
+  pop bc
+  pop hl
+  NEXT
+
+; Prints a character. ( x -- )
+  DEFCODE "EMIT", _EMIT, 0
+  push hl
+  ld a, c
+  call PutChar
+  pop hl
+  NEXT
+
+; Prints a string given a separate length. ( address length -- )
+  DEFCODE "TYPE", _TYPE, 0
+  ld d, b           ; save length in de
+  ld e, c
+  DROP              ; get bc = address
+  push hl
+.print_next
+  ld a, [bc]        ; get next character of string
+  inc bc            ; advance string pointer
+  call PutChar      ; print char
+  dec de            ; count char as printed
+  jr nz, .print_next ; while more chars keep printing
+  pop hl
+  DROP              ; pop address
+  NEXT
+
+; Stores a value x to addr. ( x addr -- )
+  DEFCODE "!", _STORE, 0
+  ld a, [hld]       ; get x low byte
+  ld [bc], a        ; store it
+  inc bc            ; next address
+  ld a, [hld]       ; get x high byte
+  ld [bc], a        ; store it
+  DROP
+  NEXT
+
+; Fetches a value x from addr. ( addr -- x )
+  DEFCODE "@", _FETCH, 0
+  ld a, [bc]        ; fetch low-order byte
+  ld d, a           ; stash it in d
+  inc bc            ; index next byte
+  ld a, [bc]        ; fetch high-order byte
+  ld b, a           ; set new top of stack to data
+  ld c, d           ;
+  NEXT
+
+; Stores a character. ( char -- )
+  DEFCODE "C,", _C_COMMA, 0
+  push hl           ; save stack pointer
+  ld a, [Here]      ; load Here pointer into hl
+  ld l, a
+  ld a, [Here+1]
+  ld h, a
+  ld a, c
+  ld [hli], a       ; store low byte at pointer
+  ld a, l
+  ld [Here], a      ; update Here pointer
+  ld a, h
+  ld [Here+1], a
+  pop hl            ; restore stack pointer
+  DROP
+  NEXT
+
+; Stores a character to addr. ( char addr -- )
+  DEFCODE "C!", _C_STORE, 0
+  ld a, [hld]       ; get char low byte
+  ld [bc], a        ; store it at addr
+  dec hl            ; skip high byte
+  DROP
+  NEXT
+
+; Fetches a character. ( addr -- char )
+  DEFCODE "C@", _C_FETCH, 0
+  ld a, [bc]        ; fetch character
+  ld b, 0           ; set new top of stack to character
+  ld c, a
+  NEXT
+
+; Enter interpretation state. ( -- )
+  DEFCODE "[", _LEFT_BRACKET, 0
+  ld a, 0
+  ld [State], a
+  ld [State+1], a
+  NEXT
+
+; Enter compilation state. ( -- )
+  DEFCODE "]", _RIGHT_BRACKET, 0
+  ld a, $ff
+  ld [State], a
+  ld [State+1], a
+  NEXT
+
+; Flags the most recently compiled word as immediate. ( -- )
+  DEFCODE "IMMEDIATE", _IMMEDIATE, 0
+  ld a, [Latest]    ; set de to latest entry pointer
+  ld e, a
+  ld a, [Latest+1]
+  ld d, a
+  inc de            ; skip previous entry pointer
+  inc de
+  ld a, [de]
+  or a, FLAG_IMMEDIATE
+  ld [de], a
+  NEXT
+
+; Toggles whether the current entry is hidden.
+  DEFCODE "(TOGGLE-HIDDEN)", _TOGGLE_HIDDEN, 0
+  ld a, [Latest]    ; set de to latest entry pointer
+  ld e, a
+  ld a, [Latest+1]
+  ld d, a
+  inc de            ; skip previous entry pointer
+  inc de
+  ld a, [de]
+  xor a, FLAG_HIDDEN
+  ld [de], a
+  NEXT
+
+; Defines a new word. ( "<spaces>name" -- )
+  DEFCODE ":", _COLON, 0
+  call _CREATE_EMPTY
+  call _TOGGLE_HIDDEN ; hide the word while defining it
+  call _RIGHT_BRACKET ; set state to compiling
+  NEXT
+
+; Defines a new word with no name.
+  DEFCODE ":NONAME", _COLON_NO_NAME, 0
+  ; :NONAME defines an actual dictionary entry with a zero length name,
+  ; so that words like ; and RECURSE work normally.
+  push hl           ; save stack pointer
+  ld a, [Here+1]    ; get current here pointer
+  ld h, a
+  ld a, [Here]
+  ld l, a
+  bit 0, l          ; check if here is cell-aligned
+  jr z, .aligned
+  inc hl            ; if not aligned, align it
+.aligned
+  push hl           ; save start of entry pointer
+  ld a, [Latest]    ; copy link to previous word
+  ld [hli], a
+  ld a, [Latest+1]
+  ld [hli], a
+  ld a, 0           ; set length byte to 0
+  ld [hli], a
+  ld a, l           ; update HERE
+  ld [Here], a
+  ld a, h
+  ld [Here+1], a
+  pop hl            ; set HL to start of entry
+  ld a, l           ; update LATEST
+  ld [Latest], a
+  ld a, h
+  ld [Latest+1], a
+  pop hl            ; restore stack
+  DROP
+  call _TOGGLE_HIDDEN ; hide the word while defining it
+  call _RIGHT_BRACKET ; set state to compiling
+  ; We need some way to find this unnamed thing, so push its xt.
+  call _LATEST
+  NEXT
+
+; Ends the current definition. ( -- )
+  DEFCODE ";", _SEMICOLON, 0
+  PUSH16 $c9        ; ret opcode
+  call _C_COMMA     ; append ret
+  call _TOGGLE_HIDDEN ; unhide the word, it's ready
+  call _LEFT_BRACKET  ; set state to interpreting
+  NEXT
+
+; Compiles a call to the word currently being compiled. ( -- )
+  DEFCODE "RECURSE", _RECURSE, FLAG_IMMEDIATE
+  call _LATEST      ; word currently beign defined
+  call _TO_BODY     ; skip past the header
+  call _COMPILE_COMMA ; generate a call
+  NEXT
+
+; Appends a test and branch-if-zero sequence and pushes target address.
+  DEFCODE "0BRANCH", _0BRANCH, FLAG_IMMEDIATE
+  DUP               ; result
+  push hl           ; save stack pointer
+  ld a, [Here]      ; load Here pointer into hl
+  ld l, a
+  ld a, [Here+1]
+  ld h, a
+  ld a, $78         ; ld a, b
+  ld [hli], a       ;
+  ld a, $b1         ; or a, c
+  ld [hli], a       ;
+  ld a, $c9         ; call _DROP
+  ld [hli], a       ;
+  ld a, LOW(_DROP)  ;
+  ld [hli], a       ;
+  ld a, HIGH(_DROP) ;
+  ld [hli], a       ;
+  ld a, $ca         ; jp z, XXXX
+  ld [hli], a       ;
+  ld b, h           ; save target
+  ld c, l
+  inc hl            ; skip over target
+  inc hl
+  ld a, l
+  ld [Here], a      ; update Here pointer
+  ld a, h
+  ld [Here+1], a
+  pop hl            ; restore stack pointer
+  NEXT
+
+; Appends an unconditional branch and pushes target offset.
+  DEFCODE "BRANCH", _BRANCH, FLAG_IMMEDIATE
+  DUP               ; result
+  push hl           ; save stack pointer
+  ld a, [Here]      ; load Here pointer into hl
+  ld l, a
+  ld a, [Here+1]
+  ld h, a
+  ld a, $ca         ; jp XXXX
+  ld [hli], a       ;
+  ld b, h           ; save target
+  ld c, l
+  inc hl            ; skip over target
+  inc hl
+  ld a, l
+  ld [Here], a      ; update Here pointer
+  ld a, h
+  ld [Here+1], a
+  pop hl            ; restore stack pointer
+  NEXT
+
+; Appends code to branch if top of stack is false.
+  DEFCODE "IF", _IF, FLAG_IMMEDIATE
+  call _0BRANCH     ; append test and branch-if-zero
+  NEXT
+
+; Patches the branch target for an IF at top of stack.
+  DEFCODE "THEN", _THEN, FLAG_IMMEDIATE
+  ld a, [Here]      ; patch low byte of target
+  ld [bc], a
+  inc bc
+  ld a, [Here+1]    ; patch high byte of target
+  ld [bc], a
+  DROP              ; pop target offset
+  NEXT
+
+; Patches the branch target for an IF with a false branch.
+  DEFCODE "ELSE", _ELSE, FLAG_IMMEDIATE
+  call _BRANCH      ; append a branch over the else body
+  call _SWAP        ; get IF false target at top of stack
+  call _THEN        ; patch up the IF false branch to go to else
+  NEXT
+
+; CASE compiles a sequence of IF statements.
+  DEFCODE "CASE", _CASE, FLAG_IMMEDIATE
+  ; Push a compile time stack sentinel so ENDCASE can detect when it is done
+  ; patching branch targets.
+  PUSH16 0
+  NEXT
+
+; OF tests whether a case matches and branches over it if not.
+  DEFCODE "OF", _OF, FLAG_IMMEDIATE
+  PUSH16 _OVER      ; test if case matches with OVER =
+  call _COMPILE_COMMA
+  PUSH16 _EQUALS
+  call _COMPILE_COMMA
+  call _0BRANCH     ; branch over this case if it does not match
+  NEXT
+
+; ENDOF fixes up the target for the last OF and adds a branch out.
+  DEFCODE "ENDOF", _ENDOF, FLAG_IMMEDIATE
+  call _ELSE
+  NEXT
+
+; Helper to patch targets left on the stack to point to here.
+PatchTargets:
+  ; Go back through the stack and patch all the branch targets left
+  ; by ENDOF or LEAVE to point to DE, stopping when we hit a 0.
+  ld a, b           ; test if we hit sentinel
+  or a, c
+  jr z, .done       ; if sentinel, nothing left to patch
+  ld a, e
+  ld [bc], a        ; patch low byte of target
+  inc bc
+  ld a, d
+  ld [bc], a        ; patch high byte of target
+  DROP              ; done with this target
+  jr PatchTargets
+.done
+  DROP              ; drop sentinel
+  NEXT
+
+; ENDCASE patches all the out branches leftover from ENDOF.
+  DEFCODE "ENDCASE", _ENDCASE, FLAG_IMMEDIATE
+  ld a, [Here]      ; de = endcase offset
+  ld e, a
+  ld a, [Here+1]
+  ld d, a
+  PUSH16 _DROP      ; append code to DROP the CASE value
+  call _COMPILE_COMMA
+  jp PatchTargets   ; tail call patch ENDOF targets and pop sentinel
+
+; BEGIN just pushes the current output position.
+  DEFCODE "BEGIN", _BEGIN, FLAG_IMMEDIATE
+  call _HERE
+  NEXT
+
+; UNTIL branches back to BEGIN.
+  DEFCODE "UNTIL", _UNTIL, FLAG_IMMEDIATE
+  call _0BRANCH     ; stack will be ( ... -- begin-addr until-target )
+  call _STORE       ; stores begin-addr to until-target
+  NEXT
+
+; WHILE branches over the loop body if a condition is false.
+  DEFCODE "WHILE", _WHILE, FLAG_IMMEDIATE
+  call _0BRANCH     ; stack will be ( ... -- begin-addr while-target )
+  NEXT
+
+; REPEAT branches back to BEGIN, and patches the WHILE jump to jump over the loop.
+  DEFCODE "REPEAT", _REPEAT, FLAG_IMMEDIATE
+  call _SWAP        ; ( begin-addr while-target -- while-target begin-addr )
+  call _BRANCH      ; ( ... -- while-target begin-addr repeat-target )
+  call _STORE       ; stores begin-addr to repeat-target
+  call _HERE        ; ( ... -- while-target HERE )
+  call _SWAP
+  call _STORE       ; stores HERE to while-target 
+  NEXT
+
+; Compiles the setup code for an indexed do ... loop.
+  DEFCODE "DO", _DO, FLAG_IMMEDIATE
+  PUSH16 _DO_RUNTIME  ; compile a call the do setup
+  call _COMPILE_COMMA
+  call _HERE        ; push target address for LOOP
+  PUSH16 0          ; push sentinel to indicate end of LEAVE chain
+  NEXT
+
+; Compiles the backwards branch for an indexed do ... loop.
+  DEFCODE "LOOP", _LOOP, FLAG_IMMEDIATE
+  PUSH16 1
+  call _LITERAL     ; compile default loop increment
+  PUSH16 _LOOP_RUNTIME ; compile a call to the loop step
+  call _COMPILE_COMMA
+  ld a, [Here]      ; de = beyond loop
+  ld e, a
+  ld a, [Here+1]
+  ld d, a
+  call PatchTargets ; patch any LEAVE targets and pop sentinel
+  call _0BRANCH     ; ( ... -- do-addr loop-target )
+  call _STORE       ; stores do-addr to loop-target
+  NEXT
+
+; Compiles the backwards branch for an indexed do ... loop.
+  DEFCODE "+LOOP", _PLUS_LOOP, FLAG_IMMEDIATE
+  PUSH16 _LOOP_RUNTIME ; compile a call to the plus loop step
+  call _COMPILE_COMMA
+  ld a, [Here]      ; de = beyond loop
+  ld e, a
+  ld a, [Here+1]
+  ld d, a
+  call PatchTargets ; patch any LEAVE targets and pop sentinel
+  call _0BRANCH     ; ( ... -- do-addr loop-target )
+  call _STORE       ; stores do-addr to loop-target
+  NEXT
+
+; Runtime setup for DO. ( limit start -- )
+  DEFCODE "(DO)", _DO_RUNTIME, 0
+  call _SWAP
+  call _TO_R        ; R:( -- start ) 
+  call _TO_R        ; R:( -- start limit )
+  NEXT
+
+; Runtime stepping for LOOP and +LOOP.
+  DEFCODE "(LOOP)", _LOOP_RUNTIME, 0
+  ; Expect that the stack contains an increment.
+  ld d, b           ; pop the increment in de
+  ld e, c
+  DROP
+  push hl
+  push bc
+  ; the return stack layout will look like
+  ; <bc> <hl> <RET> <limit> <start>
+  ; SP   +2   +4    +6      +8
+  ld hl, sp+8       ; point at loop counter
+  ld a, [hli]       ; fetch loop counter
+  ld c, a
+  ld a, [hli]
+  ld b, a
+  ld a, c           ; add increment to the counter
+  add e
+  ld c, a
+  ld a, b
+  adc d
+  ld b, a
+  ld a, b           ; store loop counter
+  ld [hld], a
+  ld a, c
+  ld [hld], a
+  ld a, [hld]       ; load de = loop limit
+  ld d, a
+  ld a, [hld]
+  ld e, a
+  pop bc
+  pop hl
+  ; check if the loop counter is at its limit
+  ld a, b
+  cp a, d
+  jr nz, .continue
+  ld a, c
+  cp a, e
+  jr nz, .continue
+  pop de            ; save return address
+  pop af            ; discard loop counters
+  pop af
+  push de           ; put back return address
+  PUSH16 TRUE       ; flag that we are done
+  NEXT
+.continue
+  PUSH16 FALSE      ; flag that loop is not done
+  NEXT
+
+; Pushes the current loop counter. ( -- n )
+  DEFCODE "I", _I, 0
+  push hl
+  push bc
+  ; the return stack layout will look like
+  ; <bc> <hl> <RET> <limit> <start>
+  ; SP   +2   +4    +6      +8     
+  ld hl, sp+8       ; point at loop counter
+  ld a, [hli]       ; set de to loop counter
+  ld e, a
+  ld a, [hli]
+  ld d, a
+  pop bc
+  pop hl
+  DUP               ; push I
+  ld b, d
+  ld c, e
+  NEXT
+
+; Pushes the current _outer_ loop counter. ; ( -- n )
+  DEFCODE "J", _J, 0
+  push hl
+  push bc
+  ; the return stack layout will look like
+  ; <bc> <hl> <RET> <limit> <start> <limit> <start>
+  ; SP   +2   +4    +6      +8      +10     +12
+  ld hl, sp+12      ; point at outer loop counter
+  ld a, [hli]       ; set de to outer loop counter
+  ld e, a
+  ld a, [hli]
+  ld d, a
+  pop bc
+  pop hl
+  DUP               ; push J
+  ld b, d
+  ld c, e
+  NEXT
+
+; Removes the current loop counter and limit from the return stack.
+  DEFCODE "UNLOOP", _UNLOOP, 0
+  call _R_FROM      ; pop return stack twice
+  call _R_FROM
+  NEXT
+
+; In standard forth ABORT drops back into the interpreter.
+; This behavior is kind of what we want to happen though.
+
+; Aborts the program with an error.
+  DEFCODE "ABORT", _ABORT, 0
+  jp Error
+
+; Macro to print an error and then abort the program.
+  DEFCODE "ABORT\"", _ABORT_QUOTE, FLAG_IMMEDIATE
+  call _DOT_QUOTE
+  jp Error
 
 ; The outer interpreter loop is called QUIT (no really).
   DEFCODE "QUIT", _QUIT, 0
-.interpreter
-  ; TODO
-  jr .interpreter
+  ld hl, ParameterStack-1
+  ld bc, STACK_SENTINEL
+  di
+  ld sp, TopOfStack
+  ei
+  call _LEFT_BRACKET  ; set state to interpreting
+.next_word
+  PUSH16 " "
+  call _WORD        ; scan the next word of input
+  ld a, [bc]        ; get length of the word
+  cp a, 0           ; 
+  jr z, .eof        ; length 0 means we hit eof
+  call _FIND        ; try to look up the word
+  ld a, c           ; get find result flags in a
+  cp a, 0
+  jr z, .number     ; 0 -> word not found, assume number instead
+  cp a, 1
+  jr z, .run_word   ; 1 -> immediate word, execute word now
+  ; found a compiled word
+  ld a, [State]
+  jr z, .run_word   ; if interpreting, execute word now
+  ; else we are compiling and found a compiled word
+  DROP              ; drop flags
+  call _COMPILE_COMMA ; compile xt
+  jr .next_word
+.run_word
+  DROP              ; drop flags
+  call _EXECUTE     ; execute xt
+  jr .next_word
+.number
+  dec hl            ; discard find flags
+  dec hl
+  DROP              ; discard missing word and reset top
+  call _NUMBER      ; push the number
+  ld a, [State]
+  call nz, _LITERAL ; if compiling, append code to push
+  jr .next_word
+.eof
+  ld a, [State]
+  jp z, Done        ; eof when interpreting -> done
+  jp Error          ; else eof when compiling -> error
 
-; The main program will call into _QUIT to start the interpreter.
+; Strangely, _QUIT is how we enter the interpreter.
 EXPORT _QUIT
-EXPORT last_entry
+
+; Appends opcode D with argument BC to [Here], and advances Here.
+AppendCode:
+  push hl
+  ld a, [Here]    ; get output pointer
+  ld l, a
+  ld a, [Here+1]
+  ld h, a
+  ld a, d           ; get prefix from D
+  ld [hl], a        ; output prefix (e.g. call instruction)
+  inc hl
+  ld [hl], c        ; output word from top of stack
+  inc hl
+  ld [hl], b
+  inc hl
+  ld a, l           ; advance and save output pointer
+  ld [Here], a
+  ld a, h
+  ld [Here+1], a
+  pop hl
+  ret

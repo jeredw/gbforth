@@ -27,24 +27,45 @@ CurPage: db
 PageBasePtr: dw
 PagePtr: dw
 Editing: db
-Radix: db
-EXPORT ScanPtr
-ScanPtr: dw         ; The next character of the program input to scan
-Latest: dw          ; Points to the most recent dictionary entry
-WordFlags: db       ; Header of the current dictionary entry
 
-EXPORT WordLen
+; A ram trampoline to call via an indirect pointer.
+Indirect: ds 3
+EXPORT Indirect
+
+State: dw           ; 0 if interpreting, $ffff if compiling
+EXPORT State
+Base: dw            ; current base for printing and scanning numbers
+                    ; 2 bytes because BASE requires it be a cell
+EXPORT Base
+Here: dw            ; Here points to the next free byte of user memory
+EXPORT Here
+ScanPtr: dw         ; The next character of the program input to scan
+EXPORT ScanPtr
+Latest: dw          ; Points to the most recent dictionary entry
+EXPORT Latest
+WordFlags: db       ; Header of the current dictionary entry
+EXPORT WordFlags
+
 ; Note: wordlen must immediately precede FormatBuf so that it can be treated as
 ; a length-prefixed byte string.
 WordLen:   db       ; Length of the most recent scanned word
+EXPORT WordLen
 ; Last character is a sentinel
 def FORMAT_BUF_LEN      equ 32
+EXPORT END_SENTINEL
 def END_SENTINEL        equ $ff
 FormatBuf: ds FORMAT_BUF_LEN + 1
 
 ; Space reserved for parameter stack
+def STACK_SENTINEL equ $bad5
+EXPORT STACK_SENTINEL
+StackSentinel: dw
 def PARAMETER_STACK_SIZE equ 256
 ParameterStack: ds PARAMETER_STACK_SIZE
+EXPORT ParameterStack
+
+SECTION "User", WRAMX[$D000]
+User: ds 4*1024     ; Reserved for user programs.
 
 SECTION "Save RAM", SRAM[$A000], BANK[0]
 def PAGE_SIZE equ TILEMAP_AREA
@@ -82,6 +103,7 @@ def SCROLL_ROW    equ SCREEN_HEIGHT - 5
 
 SECTION "Top of stack", WRAMX[$DFFF], BANK[1]
 TopOfStack: ds 0
+EXPORT TopOfStack
 
 SECTION "OAM Shadow", WRAM0[$CF00]
 OamShadow: ds OAM_SIZE
@@ -140,17 +162,24 @@ Boot:
   ld a, HIGH(SaveData+$20)
   ld [PagePtr+1], a
   ld a, 10
-  ld [Radix], a
+  ld [Base], a
   ld a, END_SENTINEL
   ld [FormatBuf + FORMAT_BUF_LEN], a  ; one byte past end of usable buffer
   ld a, LOW(last_entry)
   ld [Latest], a
   ld a, HIGH(last_entry)
   ld [Latest+1], a
-  ld a, LOW(SaveData)
-  ld [ScanPtr], a
-  ld a, HIGH(SaveData)
-  ld [ScanPtr+1], a
+  ld a, LOW(User)
+  ld [Here], a
+  ld a, HIGH(User)
+  ld [Here+1], a
+  ; to help with detecting stack underflows
+  ld a, HIGH(STACK_SENTINEL)
+  ld [StackSentinel], a
+  ld a, LOW(STACK_SENTINEL)
+  ld [StackSentinel+1], a
+  ld a, $cd         ; set up trampoline
+  ld [Indirect], a
 
   ; Copy tiles for font into VRAM at $8000
   ld de, Font
@@ -255,8 +284,11 @@ Boot:
   ld [rIE], a
   ei
 
-  ; Set up forth state
-  ld hl, ParameterStack+1
+  ; Start scanning from the beginning of the program.
+  ld a, LOW(SaveData)
+  ld [ScanPtr], a
+  ld a, HIGH(SaveData)
+  ld [ScanPtr+1], a
 
 ; The interpreter loop runs during the frame
 Main:
@@ -264,10 +296,29 @@ Main:
   nop 
   jr Main
 
+; Prints the signed number BC.
+EXPORT PutSignedNumber
+PutSignedNumber:
+  bit 7, b
+  jr z, .print_digits ; if sign bit is 0, just print magnitude
+  ld a, "-"
+  call PutChar      ; print minus sign
+  ld a, b           ; negate the number
+  cpl
+  ld b, a
+  ld a, c
+  cpl
+  ld c, a
+  inc bc
+.print_digits
+  call PutUnsignedNumber
+  ret
+
 ; Prints the unsigned number BC.
+EXPORT PutUnsignedNumber
 PutUnsignedNumber:
   ld hl, FormatBuf + FORMAT_BUF_LEN - 1
-  ld a, [Radix]
+  ld a, [Base]
   ld d, a
 .get_digits
   call UnsignedDiv16By8
@@ -291,6 +342,7 @@ PutUnsignedNumber:
 ; Scans the unsigned number pointed to by HL into BC.
 ; Leaves HL at the character after the number.
 ; E counts how many characters were consumed.
+EXPORT ScanUnsignedNumber
 ScanUnsignedNumber:
   ld b, 0           ; BC is the result
   ld c, 0
@@ -312,7 +364,7 @@ ScanUnsignedNumber:
   inc e             ; count characters
   push af
   push hl
-  ld a, [Radix]
+  ld a, [Base]
   call UnsignedMul16By8 ; bc * 10
   pop hl
   pop af
@@ -373,20 +425,19 @@ ScanWord:
   ld [WordLen], a
   ret
 
-; Looks up word in FormatBuf in the dictionary. Assumes it is prefixed with
-; a length.
+; Looks up word at BC in the dictionary. Assumes it is prefixed with a length.
 ;
 ; Returns a pointer to the body of the dictionary entry in HL or 0 if not in
-; dictionary. Sets [WordFlags] to the corresponding length+flags for the entry.
+; dictionary. Returns length+flags in A and [WordFlags].
+EXPORT LookupWord
 LookupWord:
-  ld a, [WordLen]
-  ld c, a           ; get target length in c
   ld a, [Latest]    ; point hl at head of the dictionary
   ld l, a
   ld a, [Latest+1]
   ld h, a
   jr .check_next_word
 .no_match
+  pop bc            ; pop input pointer
   pop hl            ; pop the next dictionary pointer
 .check_next_word
   ld a, h           ; check if hl is nul now
@@ -397,30 +448,38 @@ LookupWord:
   ld e, a
   ld a, [hli]
   ld d, a
-  push de           ; push it
+  push de           ; push next dictionary pointer
+  push bc           ; push input pointer (we will scan ahead)
   ld a, [hli]       ; get length+flags byte
   ld [WordFlags], a ; stash flags in case 
-  and a, $1f        ; mask length
-  cp a, c           ; is length the same as input word length?
-  jr nz, .no_match  ; different length -> not the same word
-  ld de, FormatBuf
-  ld b, a           ; get length in b
+  and a, FLAG_HIDDEN | $1f ; mask length (+ skip hidden words)
+  ld d, a           ; save length count in d
+  inc d             ; prefixed length must also match
 .compare_word
-  ld a, [de]        ; next char of input
+  ld a, [bc]        ; next char of input
   cp a, [hl]        ; next char of dictionary
   jr nz, .no_match  ; if char differs, does not match
-  inc de            ; advance input
+  inc bc            ; advance input
   inc hl            ; advance dictionary pointer
-  dec b             ; count char
+  dec d             ; count char
   jr nz, .compare_word ; continue comparing if more
   ; We found a match. hl now points at the body of the word,
   ; and [WordFlags] has the header flags.
-  pop de            ; discard next pointer
+  pop de            ; cleanup temporaries
+  pop de            ;
+  ld a, [WordFlags]
   ret
 
 ; Flag an error condition. Unwind the stack and bail.
 EXPORT Error
 Error:
+  ; TODO
+  halt
+  jr Error
+
+; Flag program done executing. Tell the user, unwind the stack and bail.
+EXPORT Done
+Done:
   ; TODO
   halt
   jr Error
@@ -464,6 +523,7 @@ UnsignedDiv16By8:
   ret
 
 ; Prints the character from A.
+EXPORT PutChar
 PutChar:
   push af
   ld a, [PrintQueueLength]
