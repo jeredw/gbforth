@@ -117,6 +117,18 @@ ENDM
   ld c, e
   NEXT
 
+; Copies top below second ( x1 x2 -- x2 x1 x2 )
+  DEFCODE "TUCK", _TUCK, 0
+  call _SWAP
+  call _OVER
+  NEXT
+
+; Drops the second item ( x1 x2 -- x2 )
+  DEFCODE "NIP", _NIP, 0
+  call _SWAP
+  call _DROP
+  NEXT
+
 ; Rotates top three elements on stack ( n1 n2 n3 -- n2 n3 n1 )
   DEFCODE "ROT", _ROT, 0
   ; Swap top with second.
@@ -139,6 +151,25 @@ ENDM
   inc hl
   ; Swap top with second.
   call _SWAP        ; ( n3 n2 n1 -- n3 n1 n2 )
+  NEXT
+
+; Indexes into the stack and copies something ( xu...x1 x0 u -- xu...x1 x0 xu )
+  DEFCODE "PICK", PICK, 0
+  ld a, b
+  or a, c
+  jp z, _DUP        ; if index is 0 then dup
+  dec bc            ; otherwise compute 2*(index-1)
+  sla c
+  rl b
+  push hl           ; save stack pointer
+  ld a, l           ; subtract 2*(index-1) from hl
+  sub a, c
+  ld l, a
+  ld a, h
+  sbc a, b
+  ld h, a
+  DROP              ; read bc and clobber index
+  pop hl
   NEXT
 
 ; Drops 2 elements from top of stack ( n1 n2 -- ).
@@ -196,6 +227,36 @@ ENDM
   DEFCODE "NEGATE", _NEGATE, 0
   call _INVERT
   inc bc
+  NEXT
+
+; Shifts x1 left by u bits ( x1 u -- x2 )
+  DEFCODE "LSHIFT", _LSHIFT, 0
+  ld d, c           ; save shift amount in d
+  DROP
+  ld a, d           ; shift amount to a
+.shift
+  cp a, 0
+  jr z, .out        ; if shift amount is 0, done
+  sla c
+  rl b
+  dec a             ; dec shift amount
+  jr .shift
+.out
+  NEXT
+
+; Shifts x1 right by u bits ( x1 u -- x2 )
+  DEFCODE "RSHIFT", _RSHIFT, 0
+  ld d, c           ; save shift amount in d
+  DROP
+  ld a, d           ; shift amount to a
+.shift
+  cp a, 0
+  jr z, .out        ; if shift amount is 0, done
+  srl b
+  rr c
+  dec a             ; dec shift amount
+  jr .shift
+.out
   NEXT
 
 ; Max of two signed numbers ( n1 n2 -- n3 )
@@ -1413,6 +1474,25 @@ def VALUE_OFFSET   equ $5
   ld c, d           ;
   NEXT
 
+; Adds a number to the cell at a-addr ( n a-addr -- )
+  DEFCODE "+!", _PLUS_STORE, 0
+  ld a, [bc]
+  ld e, a           ; e = low byte from [addr]
+  inc bc            ; inc addr
+  ld a, [bc]
+  ld d, a           ; d = high byte from [addr+1]
+  ld a, [hld]       ; add n to de
+  add a, e
+  ld e, a
+  ld a, [hld]
+  adc a, d
+  ld [bc], a        ; store high byte of sum at [addr+1]
+  dec bc
+  ld a, e
+  ld [bc], a        ; store low byte of sum at [addr]
+  DROP              ; drop n     
+  NEXT
+
 ; Stores a character. ( char -- )
   DEFCODE "C,", _C_COMMA, 0
   push hl           ; save stack pointer
@@ -1492,7 +1572,7 @@ def VALUE_OFFSET   equ $5
   call _RIGHT_BRACKET ; set state to compiling
   NEXT
 
-; Defines a new word with no name.
+; Defines a new word with no name and pushes its xt. ( -- xt )
   DEFCODE ":NONAME", _COLON_NO_NAME, 0
   ; :NONAME defines an actual dictionary entry with a zero length name,
   ; so that words like ; and RECURSE work normally.
@@ -1539,7 +1619,7 @@ def VALUE_OFFSET   equ $5
 
 ; Compiles a call to the word currently being compiled. ( -- )
   DEFCODE "RECURSE", _RECURSE, FLAG_IMMEDIATE
-  call _LATEST      ; word currently beign defined
+  call _LATEST      ; word currently being defined
   call _TO_BODY     ; skip past the header
   call _COMPILE_COMMA ; generate a call
   NEXT

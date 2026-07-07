@@ -187,7 +187,7 @@ ambiguities of how it works together.
 
 `:NONAME ... ;` just spits out some code, and pushes an address you can use to
 call it. It does not put it in the dictionary. Except `;` has to work for both
-`: name` and `:noname`, so we need to keep track of that, somehow. And it has to
+`: name` and `:NONAME`, so we need to keep track of that, somehow. And it has to
 work with `RECURSE`, the self-pointer for recurison.
 
 This frees us from needing to name everything. This unbound lambda idea came
@@ -202,7 +202,7 @@ them, the obsolete way with `VARIABLE` and the new way with `VALUE`. They live
 in the same symbol table as everything else. So that's not great. It's fine for
 toy programs, but it's not great.
 
-### The stack
+### The stack?
 
 Otherwise you get the stack. The stack sucks. It's just super confusing and bug
 prone. It takes like three brain cells to support infix expressions and local
