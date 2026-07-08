@@ -1173,19 +1173,19 @@ ENDM
   ;   <padding>     ; (if needed for alignment)
   ;   <aligned data goes here at +10B/+11B>
   call _HERE        ; get current address
-  ld a, c           ; compute find ret address
+  ld a, c           ; offset to ret address
   add a, 9
   ld c, a
   ld a, b
   adc a, 0
   ld b, a
-  DUP               ; save ret address for later
+  DUP               ; push ret address
   inc bc            ; data goes after ret
   call _ALIGNED     ; align data address if necessary
   call _LITERAL     ; append code to push data address
   ; _LITERAL popped data address, so now bc is the ret address again
   ld e, $c3         ; jp opcode
-  call AppendCode   ; append "jp YYYY"
+  call AppendCode   ; append "jp <ret>"
   ld bc, $c9        ; clobber top of stack with ret opcode
   call _C_COMMA     ; append "ret" (and pop stack)
   NEXT
@@ -1293,12 +1293,11 @@ def DOES_OFFSET    equ $7
   DEFCODE "CONSTANT", _CONSTANT, 0
   call _CREATE_EMPTY ; create a new, empty dictionary entry
   call _LITERAL     ; compile code to push x
-  DUP               ; push ret opcode
-  ld bc, $c9
-  call _C_COMMA     ; append "ret" (and pop)
+  PUSH16 $c9        ; push ret opcode
+  call _C_COMMA     ; append "ret"
   NEXT
 
-; Creates a new entry that pushes an address for some aligned data. ( -- addr )
+; Creates a new entry that pushes an address for some aligned data.
   DEFCODE "VARIABLE", _VARIABLE, 0
   call _CREATE_EMPTY ; create a new, empty dictionary entry
   call _ALIGN       ; align to cell boundary
@@ -1306,8 +1305,8 @@ def DOES_OFFSET    equ $7
   PUSH16 1          ; reserve one cell for value
   call _ALLOT
   call _LITERAL     ; append code to push variable address
-  ld bc, $c9
-  call _C_COMMA     ; append "ret" (and pop)
+  PUSH16 $c9
+  call _C_COMMA     ; append "ret"
   NEXT
 
 ; Creates a new entry that loads a modifiable literal value. ( x "<spaces>name" -- )
@@ -1338,6 +1337,36 @@ def VALUE_OFFSET   equ $5
   PUSH16 VALUE_OFFSET
   call _PLUS        ; skip into literal
   call _STORE       ; store x to literal
+  NEXT
+
+; Checkpoints dictionary and memory state. ( "<spaces>name" -- )
+  DEFCODE "MARKER", _MARKER, 0
+  call _LATEST      ; save latest dictionary pointer
+  call _HERE        ; save current data space pointer
+  call _CREATE_EMPTY  ; create an empty entry
+  call _LITERAL     ; compile code to push HERE
+  call _LITERAL     ; compile code to push LATEST
+  PUSH16 _MARKER_RUNTIME  ; compile code to call MARKER_RUNTIME
+  call _COMPILE_COMMA
+  PUSH16 $c9
+  call _C_COMMA     ; append "ret" (and pop)
+  NEXT
+
+; Rolls back dictionary and memory state. ( old-here old-latest -- )
+  DEFCODE "(MARKER)", _MARKER_RUNTIME, 0
+  ; Since dictionary entries point to earlier entries, we can just
+  ; bump the latest entry pointer back to where it was before MARKER
+  ; and don't have to fix up any other dictionary pointers.
+  ld a, c
+  ld [Latest], a
+  ld a, b
+  ld [Latest+1], a
+  DROP              ; pop latest
+  ld a, c
+  ld [Here], a
+  ld a, b
+  ld [Here+1], a
+  DROP              ; pop here
   NEXT
 
 ; Counts how many bytes are in n1 cells. ( n1 -- n2 )

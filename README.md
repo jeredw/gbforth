@@ -177,6 +177,8 @@ This is the "newer" version of `VARIABLE`.
 other entry's action using `IS` and queried with `ACTION-OF`.
 - `CREATE` builds a new entry that by default pushes its address. `DOES>`
 compiles code that the word should do, in addition to that.
+- `MARKER` builds a new entry that checkpoints memory and unwinds it when you
+invoke that word, kind of like an undo.
 
 You can probably code up some object systems and abstractions with all that. But
 you have to really dig for explanations about _why_ they exist. It's all just in
