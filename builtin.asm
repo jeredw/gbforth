@@ -374,7 +374,7 @@ ENDM
   ld b, a
   NEXT
 
-; Subtracts top of stack from second ( n1 n2 -- difference )
+; Subtracts top of stack from second, i.e. n1 - n2 ( n1 n2 -- difference )
   DEFCODE "-", _MINUS, 0
   ; Subtract low byte of top from low byte of second.
   ld a, [hld]
@@ -546,6 +546,18 @@ ENDM
   NEXT
 .n1_lt_n2
   ld bc, TRUE       ; yes, <
+  NEXT
+
+; Tests if a number is within a range ( test low high -- flag )
+  DEFCODE "WITHIN", _WITHIN, 0
+  ; Magic reference implementation from forth-standard.org
+  ; : WITHIN ( test low high -- flag ) OVER - >R - R> U< ;
+  call _OVER
+  call _MINUS
+  call _TO_R
+  call _MINUS
+  call _R_FROM
+  call _U_LESS_THAN
   NEXT
 
 ; Logical ORs second with top ( x1 x2 -- x3 )
@@ -991,6 +1003,18 @@ ENDM
   ld a, [Latest]
   ld c, a
   ld a, [Latest+1]
+  ld b, a
+  NEXT
+
+; Reports unused space. ( -- u )
+  DEFCODE "UNUSED", _UNUSED, 0
+  call _HERE        ; push bc = here
+  ; Compute EndOfUser - Here
+  ld a, LOW(EndOfUser)
+  sub a, c
+  ld c, a
+  ld a, HIGH(EndOfUser)
+  sub a, b
   ld b, a
   NEXT
 

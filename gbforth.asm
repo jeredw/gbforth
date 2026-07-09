@@ -68,6 +68,8 @@ EXPORT ParameterStack
 
 SECTION "User", WRAMX[$D000]
 User: ds 4*1024     ; Reserved for user programs.
+EndOfUser: ds 0
+EXPORT EndOfUser
 
 SECTION "Save RAM", SRAM[$A000], BANK[0]
 def PAGE_SIZE equ TILEMAP_AREA

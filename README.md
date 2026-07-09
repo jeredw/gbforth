@@ -148,6 +148,7 @@ the extra check does take 40 clock cycles of painful stack shuffling. Ugh.
 There are also backwards branching while loops. There's `BEGIN ... AGAIN`,
 `BEGIN ... UNTIL`, and `BEGIN ... WHILE ... REPEAT`. You can use `LEAVE` to
 break out of `DO ... LOOP` but you'd better not try it in a `BEGIN` loop.
+Ditto `UNLOOP`.
 
 ### Strings
 
