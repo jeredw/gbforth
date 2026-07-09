@@ -153,6 +153,55 @@ ENDM
   call _SWAP        ; ( n3 n2 n1 -- n3 n1 n2 )
   NEXT
 
+; Rotates u+1 items on the stack ( xu xu-1 ... x0 u -- xu-1 ... x0 xu )
+  DEFCODE "ROLL", ROLL, 0
+  ld a, b
+  or a, c
+  jr z, .out        ; if u=0 then roll does nothing
+  ; assume if u>0 that there are at least 1 + u+1 entries on the stack
+  ; and so everything we need to roll is at [hl]. top (in bc) doesn't
+  ; need to roll, so this just amounts to swapping adjacent words in ram
+  push hl           ; save stack pointer
+  ld d, b           ; stash count in de
+  ld e, c
+  sla c             ; move hl back 2*u entries
+  rl b
+  ld a, l
+  add a, c
+  ld l, a
+  ld a, h
+  adc a, b
+  ld h, a
+  ; now hl points to the left member of the first pair to swap
+  ; swap each entry with its right neighbor
+.roll
+  inc hl            ; move to low byte of right
+  inc hl
+  ld a, [hld]       ; store right in temp
+  ld [Temp], a
+  ld a, [hld]
+  ld [Temp+1], a
+  ld a, [hld]       ; store left in bc
+  ld c, a
+  ld a, [hl]
+  ld b, a
+  ld a, [Temp+1]    ; replace left with right
+  ld [hli], a
+  ld a, [Temp]
+  ld [hli], a
+  ld a, b           ; replace right with old left
+  ld [hli], a
+  ld a, c     
+  ld [hl], a
+  dec de            ; dec count of pairs to swap
+  ld a, d
+  or a, e
+  jr nz, .roll      ; continue swapping while count is nonzero
+  pop hl            ; restore stack pointer
+.out
+  DROP              ; drop count and move xu to top
+  NEXT
+
 ; Indexes into the stack and copies something ( xu...x1 x0 u -- xu...x1 x0 xu )
   DEFCODE "PICK", PICK, 0
   ld a, b
