@@ -234,6 +234,24 @@ ENDM
   call _OVER
   NEXT
 
+; Fetches 2 elements ( a-addr -- x1 x2 ).
+  DEFCODE "2@", _2FETCH, 0
+  call _DUP
+  call _CELL_PLUS
+  call _FETCH       ; fetch most significant word
+  call _SWAP
+  call _FETCH       ; fetch least significant word
+  NEXT
+
+; Stores 2 elements ( x1 x2 a-addr -- ).
+  DEFCODE "2!", _2STORE, 0
+  call _SWAP
+  call _OVER        ; ( -- x1 a-addr x2 a-addr )
+  call _STORE       ; store least-significant word
+  call _CELL_PLUS
+  call _STORE       ; store most sigificant word
+  NEXT
+
 ; Swaps 2 elements at top of stack ( n1 n2 n3 n4 -- n3 n4 n1 n2 ).
   DEFCODE "2SWAP", _2SWAP, 0
   ; : 2SWAP ROT >R ROT R> ; is taken from forth-standard.org
@@ -306,6 +324,18 @@ ENDM
   dec a             ; dec shift amount
   jr .shift
 .out
+  NEXT
+
+; Shift right arithmetic by one bit. ( x1 -- x2 )
+  DEFCODE "2/", _2SLASH, 0
+  sra b
+  rr c
+  NEXT
+
+; Shift left logical by one bit. ( x1 -- x2 )
+  DEFCODE "2*", _2STAR, 0
+  sla c
+  rl c
   NEXT
 
 ; Max of two signed numbers ( n1 n2 -- n3 )
@@ -614,6 +644,33 @@ ENDM
   pop bc
   push bc
   push de           ; push caller again + ret
+  NEXT
+
+; Pop parameter stack twice and push return stack.
+; ( x1 x2 -- ) ( R: -- x1 x2 )
+  DEFCODE "2>R", _2_TO_R, 0
+  call _SWAP
+  call _TO_R
+  call _TO_R
+  NEXT
+
+; Pop return stack twice and push onto parameter stack.
+; ( -- x1 x2 ) ( R: x1 x2 -- )
+  DEFCODE "2R>", _2_R_FROM, 0
+  call _R_FROM
+  call _R_FROM
+  call _SWAP
+  NEXT
+
+; Copy twice from the return stack to the parameter stack.
+; ( -- x1 x2 ) ( R: x1 x2 -- x1 x2 )
+  DEFCODE "2R@", _2_R_FETCH, 0
+  call _R_FROM      ; ( -- x2 ) ( R: x1 x2 -- x1 )
+  call _R_FROM      ; ( x1 -- x2 x1 ) ( R: x1 -- )
+  call _2DUP        ; ( x2 x1 -- x2 x1 x2 x1 ) ( R: -- )
+  call _TO_R        ; ( x2 -- x2 x1 x2 ) ( R: -- x1 )
+  call _TO_R        ; ( -- x2 x1 ) ( R: -- x1 x2 )
+  call _SWAP        ; ( -- x1 x2 ) ( R: -- x1 x2 )
   NEXT
 
 ; Scans a word delimited by the character at the top of the stack
