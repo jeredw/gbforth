@@ -837,6 +837,33 @@ ENDM
   call _LITERAL
   NEXT
 
+; Comments with '\'.
+  DEFCODE "\\", _BACKSLASH, FLAG_IMMEDIATE
+  ; This is a little unusual because we do not use newlines.
+  ; Instead every line is 32 bytes long.
+  ; We still scan ahead instead of just adding to ScanPtr so that we can
+  ; detect the end sentinel and stop early.
+  push hl
+  ld a, [ScanPtr]   ; load scan pointer
+  ld l, a
+  ld a, [ScanPtr+1]
+  ld h, a
+.scan_to_next_line
+  ld a, [hl]        ; check next character
+  cp a, END_SENTINEL
+  jr z, .done       ; if next char is eof, done
+  inc hl            ; inc pointer
+  ld a, l
+  and a, $1f        ; test if at line boundary
+  jr nz, .scan_to_next_line  ; not at line boundary, keep scanning
+.done
+  ld a, l
+  ld [ScanPtr], a
+  ld a, h
+  ld [ScanPtr+1], a
+  pop hl
+  NEXT
+
 ; Comments with '(' and ')'.
   DEFCODE "(", _OPEN_PAREN, FLAG_IMMEDIATE
   PUSH16 ")"
