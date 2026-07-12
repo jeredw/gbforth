@@ -76,6 +76,8 @@ def PAGE_SIZE equ TILEMAP_AREA
 def NUM_PAGES equ 8
 def SAVE_SIZE equ PAGE_SIZE * NUM_PAGES
 SaveData: ds  SAVE_SIZE
+EXPORT SaveData
+EXPORT SAVE_SIZE
 
 ; Editor control codes
 def CR equ 13
@@ -360,8 +362,8 @@ ScanUnsignedNumber:
   and a, $3f        ; convert to uppercase
   sub a, "A"-"0"    ; get character relative to 'A'
   ret c             ; < 'A' is not a digit
-  cp a, 6
-  ret nc            ; >= 'G' is not a digit
+  cp a, "Z"+1       ;
+  ret nc            ; > 'Z' is not a digit
   add a, 10
 .digit
   inc hl            ; consume this character

@@ -290,10 +290,18 @@ ENDM
   ld b, a
   NEXT
 
-; Negates a number. ( n1 -- n2 )
+; Negates a number. ( n -- u )
   DEFCODE "NEGATE", _NEGATE, 0
   call _INVERT
   inc bc
+  NEXT
+
+; Returns the absolute value of of a number. ( n1 -- n2 )
+  DEFCODE "ABS", _ABS, 0
+  bit 7, b
+  jr z, .out
+  call _NEGATE
+.out
   NEXT
 
 ; Shifts x1 left by u bits ( x1 u -- x2 )
@@ -779,11 +787,11 @@ ENDM
   ld c, l
 .scan_next_char
   ld a, [hl]        ; read character from input
-  inc hl            ; advance input pointer
-  cp a, e           ; is it the delimiter?
-  jr z, .done       ; if delim, we are done scanning
   cp a, END_SENTINEL
   jp z, Error       ; if we hit eof in a string, error
+  inc hl            ; always consume char (even if delimiter)
+  cp a, e           ; is it the delimiter?
+  jr z, .done       ; if delim, we are done scanning
   inc d             ; inc length
   jr .scan_next_char
 .done
@@ -798,22 +806,61 @@ ENDM
   ld c, d
   NEXT
 
-; Scans a number and returns it. ( "digits" -- n )
-; If there is no number here, errors.
-  DEFCODE "NUMBER", _NUMBER, 0
-  DUP               ; make space to push result
-  push hl
+; Scans to find the next space delimited name in input.
+; ( "<spaces>name<spaces>" -- c-addr u )
+  DEFCODE "PARSE-NAME", _PARSE_NAME, 0
+  DUP               ; push start pointer
+  push hl           ; save stack pointer
   ; HL = the next input buffer position
   ld a, [ScanPtr]
   ld l, a
   ld a, [ScanPtr+1]
   ld h, a
-  call ScanUnsignedNumber
+.skip_spaces
+  ld a, [hl]        ; read character from input
+  cp a, END_SENTINEL
+  jp z, Error       ; error if we hit eof in parse-name
+  cp a, " "         ; is it a space
+  jr nz, .start     ; if nonspace found start
+  inc hl            ; consume space
+  jr .skip_spaces
+.start
+  ld b, h           ; save start position
+  ld c, l
+  ld d, 1           ; init length to 1
+  inc h             ; next char (we know this is a nonspace)
+.find_space
+  ld a, [hl]        ; read character from input
+  cp a, END_SENTINEL
+  jr z, .end
+  cp a, " "         ; is it a space
+  jr z, .end        ; if space found end
+  inc hl            ; consume word char
+  inc d             ; count length
+  jr .find_space
+.end
   ; Save scan position.
   ld a, l
   ld [ScanPtr], a
   ld a, h
   ld [ScanPtr+1], a
+  pop hl            ; restore stack pointer
+  DUP               ; push length
+  ld b, 0
+  ld c, d
+  NEXT
+
+; Scans a number loaded by WORD and pushes it. ( "digits" -- n )
+; If there is no number in the buffer, errors.
+  DEFCODE "NUMBER", _NUMBER, 0
+  DUP               ; make space to push result
+  push hl
+  ; HL = the next input buffer position
+  ld a, LOW(WordLen+1)
+  ld l, a
+  ld a, HIGH(WordLen+1)
+  ld h, a
+  call ScanUnsignedNumber
   pop hl
   ld a, e
   cp a, 0           ; no chars consumed means not a number
@@ -939,11 +986,11 @@ ENDM
   ld d, 0           ; d = length counts from 0
 .scan_next_char
   ld a, [hl]        ; read character from input
-  inc hl            ; advance input pointer
-  cp a, "\""        ; is it a close quote?
-  jr z, .done       ; if quote, we are done scanning
   cp a, END_SENTINEL
   jp z, Error       ; if we hit eof in a string, error
+  inc hl            ; always consume char (even if ")
+  cp a, "\""        ; is it a close quote?
+  jr z, .done       ; if quote, we are done scanning
   ld [bc], a        ; store the character
   inc bc            ; next output position
   inc d             ; inc length
@@ -1140,6 +1187,18 @@ ENDM
 ; Pushes address of compilation state. ( -- addr )
   DEFCODE "STATE", _STATE, 0
   PUSH16 State
+  NEXT
+
+; Gets address of input buffer and size ( -- c-addr u )
+  DEFCODE "SOURCE", _SOURCE, 0
+  ; The input buffer is the entire program text.
+  PUSH16 SaveData
+  PUSH16 SAVE_SIZE
+  NEXT
+
+; Pushes address of scan pointer in input buffer. ( -- addr )
+  DEFCODE ">IN", _TO_IN, 0
+  PUSH16 ScanPtr
   NEXT
 
 ; Pushes the current data location. ( -- addr )
