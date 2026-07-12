@@ -416,6 +416,76 @@ ENDM
   ld b, a
   NEXT
 
+; Multiplies elements on stack ( n1 | u1 n2 | u2 -- n3 | u3 )
+  DEFCODE "*", _STAR, 0
+  ld a, [hld]       ; pop de
+  ld e, a
+  ld a, [hld]
+  ld d, a
+  push hl           ; save stack pointer 
+  call Mul16By16    ; set bc = de * bc
+  pop hl            ; restore stack pointer
+  NEXT
+
+; Divides elements on stack n1 / n2 ( n1 n2 -- n3 )
+  DEFCODE "/", _SLASH, 0
+  ld a, [hld]       ; pop de
+  ld e, a
+  ld a, [hld]
+  ld d, a
+  push hl           ; save stack pointer 
+  call UnsignedDiv16By16 ; set bc = n1 / n2
+  pop hl            ; restore stack pointer
+  NEXT
+
+; Divides elements on stack n1 / n2 ( n1 n2 -- remainder quotient )
+  DEFCODE "/MOD", _SLASH_MOD, 0
+  ld a, [hld]       ; pop de
+  ld e, a
+  ld a, [hld]
+  ld d, a
+  push hl           ; save stack pointer 
+  call UnsignedDiv16By16 ; set bc = n1 / n2, de = n1 % n2
+  pop hl            ; restore stack pointer
+  inc hl
+  ld a, d           ; push remainder
+  ld [hli], a
+  ld [hl], e
+  ; bc has the quotient on top of stack
+  NEXT
+
+; Multiplies elements on stack and returns 32-bit product ( u1 u2 -- ud )
+  DEFCODE "UM*", _U_M_STAR, 0
+  ld a, [hld]       ; pop de
+  ld e, a
+  ld a, [hld]
+  ld d, a
+  push hl           ; save stack pointer 
+  call Mul16By16    ; set de:bc = de * bc
+  pop hl            ; restore stack pointer
+  DUP               ; push bc
+  ld b, d           ; push de
+  ld c, e
+  NEXT
+
+; TODO: */
+; TODO: */MOD
+; TODO: UM/MOD
+; TODO: FM/MOD
+; TODO: SM/REM
+; TODO: M*
+
+; Sign extend n into a 32-bit word ( n -- d )
+  DEFCODE "S>D", _S_TO_D, 0
+  DUP               ; first cell is just n
+  bit 7, b
+  jr z, .positive   ; if sign bit zero then push 0
+  ld bc, -1         ; else -1
+  NEXT
+.positive
+  ld bc, 0
+  NEXT
+
 ; Equals zero ( x -- flag )
   DEFCODE "0=", _ZERO_EQUALS, 0
   ld a, b

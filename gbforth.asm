@@ -491,8 +491,7 @@ Done:
 ; Multiplies BC by the 8-bit value in A.
 ; Returns product in BC. Clobbers HL.
 UnsignedMul16By8:
-  ld h, 0           ; accumulate 16-bit product in hl
-  ld l, 0
+  ld hl, 0          ; accumulate 16-bit product in hl
 .mul
   cp a, 0
   jr z, .out        ; if multiplier is 0, we are done
@@ -504,6 +503,28 @@ UnsignedMul16By8:
   rl b
   jr .mul
 .out
+  ld b, h
+  ld c, l
+  ret
+
+; Multiplies BC by DE and stores the 32-bit result in DE:BC.
+; BC is the correct signed 16-bit product if there is no overflow.
+Mul16By16:
+EXPORT Mul16By16
+  ld hl, 0
+  ld a, 16          ; multiply 16 bits
+  ; Accumulate partial products from most to least significant.
+.loop:
+  add hl, hl        ; shift partial product left
+  rl e              ; carry into next result bit of de:hl
+  rl d              ; shift out next most significant bit of multiplier
+  jr nc, .no_mul    ; skip if next bit of multiplier is zero
+  add hl, bc        ; else add multiplicand
+  jr nc, .no_mul
+  inc de            ; carry into high word
+.no_mul
+  dec a             ; next bit
+  jr nz, .loop
   ld b, h
   ld c, l
   ret
@@ -524,6 +545,42 @@ UnsignedDiv16By8:
 .no_sub
   dec e
   jr nz, .div
+  ret
+
+; Divides BC by the 16-bit value in DE.
+; Returns quotient in BC, remainder in DE.
+UnsignedDiv16By16:
+EXPORT UnsignedDiv16By16
+  ld hl, 0          ; initialize remainder to 0
+  ld a, 16          ; count 16 bits
+  ld [Temp], a      ; store counter in temp
+.div
+  ; shift next bit of dividend into remainder
+  sla c             ; shift bc left by one bit
+  rl b
+  rl l              ; shift carry into hl (remainder)
+  rl h
+  ; compare remainder with divisor
+  ld a, l
+  sub a, e          ; subtract least significant byte
+  ld a, h
+  sbc d             ; carry into most significant byte
+  jr c, .no_sub     ; if carry, hl < de
+  ; remainder is large enough to subtract
+  ld a, l
+  sub a, e
+  ld l, a
+  ld a, h
+  sbc d
+  ld h, a
+  inc c             ; set lowest bit of quotient
+.no_sub
+  ld a, [Temp]      ; update loop counter
+  dec a
+  ld [Temp], a
+  jr nz, .div
+  ld d, h
+  ld e, l
   ret
 
 ; Prints the character from A.
