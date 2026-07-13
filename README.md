@@ -2,7 +2,8 @@
 
 Gameboy Forth lets you use an onscreen keyboard to enter little Forth programs
 and run them on your Gameboy. This will be a boring monochrome Forth, although
-it might be fun to build a colorForth for Gameboy Color some day.
+it might be fun to build a
+[colorForth](https://en.wikipedia.org/wiki/ColorForth) for the Gameboy Color.
 
 Programs are divided into pages of 32x32 characters or 1KB, since this fits
 nicely on one VRAM tilemap page. To save programs, we target an
@@ -18,8 +19,8 @@ Forth buffers your whole program instead of just the current line.
 When you press START, the program is re-interpreted. If there is a syntax error,
 Gameboy Forth will return to the editor with the cursor positioned near it.
 Otherwise the editor cursor will not reappear until you press START again.
-Note that `KEY` still uses the on screen keyboard to read input, and if it is
-run in an immediate context it will block interpreting the rest of the program.
+`KEY` still uses the on screen keyboard to read input, and if it is run in an
+immediate context it will block interpreting the rest of the program.
 
 ## VM details
 
@@ -38,13 +39,12 @@ are direct threaded with explicit `call` instructions.
   NEXT
 ```
 
-The definition of `NEXT` is just `ret`, so dispatch costs 6 + 4 = 10 cycles.
-Indirect, implicit threaded Forths have a `DOCOL` interpreter that pushes the
-return stack, and a separate `EXIT` to pop, but we don't need that.
+The definition of `NEXT` is just `ret`, so dispatch costs `call + ret` or 10
+cycles.
 
-Arithmetic is 16 bit. The parameter stack is stored with its first word in `bc`
-and the rest of its values in a software stack indexed by `hl`. `hl` points to
-the low-order byte of the second stack entry. So `DUP` is:
+Arithmetic is 16-bit. The parameter stack is stored with its first word in BC
+and the rest of its values in a software stack indexed by HL. HL points to the
+low-order byte of the second stack entry. So `DUP` is:
 
 ```
   ; Example DUP implementation
@@ -72,28 +72,59 @@ the low-order byte of the second stack entry. So `DUP` is:
 
 ### Alternative: hardware stack for parameters?
 
-We could maybe get slightly more compact builtin code by using the 16 bit
-hardware stack for parameters, but this makes managing the return stack painful
-since we'd want to thread through `jp hl` so `hl` isn't available for a stack
-pointer. `NEXT -> op` could be faster, 7 cycles. But pushing and popping the
-return stack is much slower (20+ cycles).
+We could get more compact code by using the hardware stack for parameters.
 
 ```
+  ; Example DUP implementation with hardware stack
+  dw link     ; previous word in dictionary
+  db 3        ; name length
+  db "DUP"
+  ; Assuming we still keep top of stack in bc
+  push bc
+  NEXT
+```
+
+But this makes managing the return stack painful since we'd need to use a
+register like HL to track the current code location, instead of implicitly using
+PC and SP. So we'd be short a register for tracking the current return stack.
+Indirect threading would look something like:
+
+```
+; 14 cycles to jump to next address in threaded code for a word
 macro NEXT
-  inc hl
-  jp hl   ; (assuming code is jp XXXX)
+  ; Read next address from threaded code
+  ld a, [hli]   ; +2
+  ld e, a       ; +1
+  ld a, [hli]   ; +2
+  ld d, a       ; +1
+  ; Jump to the next address.
+  push de       ; +4
+  ret           ; +4
 endm
 
+; Used by DOCOL to push code position on return stack
+; Needs a slow indirect load through PCstack because we don't have enough
+; registers to keep track of the return stack.
 macro PUSHPC
+  ; Stash current code location
   push hl        ; +4
+  ; Indirect load return stack pointer from [PCstack] into hl
   ld hl, PCstack ; +3
   ld a, [hli]    ; +2
   ld h, [hl]     ; +2
   ld l, a        ; +1
+  ; Push current code location onto the return stack
   pop de         ; +4
   ld a, e        ; +1
   ld [hli], a    ; +2
-  ld [hl], d     ; +2
+  ld a, d        ; +1
+  ld [hli], a    ; +2
+  ; Save return stack pointer
+  ld a, l        ; +1
+  ld [PCstack], a ; +4
+  ld a, h        ; +1
+  ld [PCstack+1], a ; +4
+  ; Restore current code location
   ld h, d        ; +1
   ld l, e        ; +1
 endm
@@ -103,9 +134,10 @@ macro EXIT
 endm
 ```
 
-We could fix `hl` as the return stack pointer and thread through `jp Ptr`, but
-this would make `NEXT` slow. There might be some cool hack we could do here but
-really just doing the simple thing seems to make most sense on this CPU.
+We could fix HL as the return stack pointer and store the current PC in memory,
+but this would make `NEXT` slow. There might be some cool hack we could do here
+to support indirect threading, but really subroutine threading seems to make
+most sense on this CPU.
 
 ### Literals
 
@@ -123,18 +155,19 @@ instead compile literals as
 Forth is a weird mishmash of many generations of hacky metaprogramming stuff.
 It is at best confusing and at worst incoherent.
 
-While implementing a Forth, I had to understand the _what_ of the language.
-Searching online turned up confused hobbyist forum posts, strange textbooks from
-the 80s, and the truly cursed [ANS Forth standard](https://forth-standard.org/).
-I guess this standard had the impossible task of making sense of this mess by
-writing down what everyone did for 50 years, and the result is not good.
+A big part of the problem is just understanding what the core vocabulary of
+the language is. Searching online turned up confused hobbyist forum posts,
+strange textbooks from the 80s, and the truly cursed [ANS Forth
+standard](https://forth-standard.org/). This standard had the impossible task of
+making sense of the mess by writing down what everyone did for 50 years, and the
+result is not good.
 
 ### Loops
 
-There is no provision for call frames or local variables _except_ for loop
-indices. `DO ... LOOP`, the standard `for` loop construct, basically requires
-hijacking the return stack to bootleg dynamic scope for its state. To read the
-indices, you go spelunk on the return stack.
+There is no provision for local variables, _except_ for loop indices. `DO ...
+LOOP`, the standard `for`-loop construct, basically hijacks the return stack to
+bootleg dynamic scope for its state. To read the indices, you go spelunk on the
+return stack.
 
 Belatedly I have learned there is also `?DO ... LOOP`. The old non-? `DO` does
 not check if its start and end limits are already equal before looping, and will
@@ -148,15 +181,14 @@ the extra check does take 40 clock cycles of painful stack shuffling. Ugh.
 There are also backwards branching while loops. There's `BEGIN ... AGAIN`,
 `BEGIN ... UNTIL`, and `BEGIN ... WHILE ... REPEAT`. You can use `LEAVE` to
 break out of `DO ... LOOP` but you'd better not try it in a `BEGIN` loop.
-Ditto `UNLOOP`.
+Ditto `UNLOOP`, which I guess exists because `LEAVE` is too slow?
 
 ### Strings
 
 There are two string conventions, an older one where string addresses point to a
 length byte prefixed to data, and a "newer" one where people pass around a data
 pointer and length separately. The older convention is baked into several
-standard system words so we're stuck with it. Otherwise I could avoid copying
-every single token during compilation!
+standard system words so we're stuck with it.
 
 ### Weird Dictionary Antics
 
@@ -167,7 +199,9 @@ This is both good and bad.
 
 `: name ... ;` builds a new dictionary entry named `name` and compiles some code
 into it. So far, so good. `IMMEDIATE` turns an entry (which one? `LATEST`) into
-a compile-time macro. Cool. Weird, but cool. And then there's more.
+a compile-time macro. Cool.
+
+So what do we do with this?
 
 - `CONSTANT` builds a new entry that pushes a literal.
 - `VARIABLE` builds a new entry that pushes an address where you can store some
@@ -182,8 +216,8 @@ compiles code that the word should do, in addition to that.
 invoke that word, kind of like an undo.
 
 You can probably code up some object systems and abstractions with all that. But
-you have to really dig for explanations about _why_ they exist. It's all just in
-the standard with no context and forum threads with people arguing about
+you have to really dig for explanations about _why_ stuff is this way. It's all
+just in the standard with no context and forum threads with people arguing about
 ambiguities of how it works together.
 
 ### :NONAME
@@ -209,7 +243,7 @@ toy programs, but it's not great.
 
 Otherwise you get the stack. The stack sucks. It's just super confusing and bug
 prone. It takes like three brain cells to support infix expressions and local
-variables. Concatenative programming is... kind of cool I guess, but only in
+variables. Concatenative programming is kind of cool I guess, but only in
 extremely small doses.
 
 Look, we have this CPU with 7 registers and really anemic addressing, and we're
@@ -219,3 +253,20 @@ is not an efficient way to program this machine. I just want to spill into RAM.
 ### Printing things
 
 For the love of all that is holy, what is a pictured numeric output. Hoo boy.
+
+### Where's the code?
+
+I've had a hard time finding interesting Forth programs to try. This makes a lot
+of the stranger features here academic. It's not like I'm going to be able to
+run program X, if only I add support for weird feature Y.
+
+After reading a bunch of complainy forum threads, I imagine the standard
+response here would be that I should be making my own Forth to suit my needs.
+It's not supposed to be one size fits all. In terms of what would be useful for
+writing actual Gameboy games - this language probably isn't it.
+
+## What would be better
+
+TODO...  Named parameters and no implicit parameter stack? Lexical scope? It's
+interesting that taking out the implicit stack kinda makes it not feel like
+Forth anymore.
