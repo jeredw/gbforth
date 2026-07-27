@@ -488,7 +488,7 @@ ScanUnsignedNumber:
 ; If there are more than FORMAT_BUF_LEN characters in the word, skips any excess
 ; characters until the next delim.
 ;
-; Leaves HL at the first non-scanned character.
+; Leaves HL *after* the final delimiter.
 EXPORT ScanWord
 ScanWord:
   ld d, HIGH(FormatBuf)
@@ -503,7 +503,7 @@ ScanWord:
 .in_word
   ld a, [hl]
   cp a, c
-  jr z, .out        ; done scanning if we see a delim
+  jr z, .final_delim ; done scanning if we see a delim
 .store_char
   cp a, END_SENTINEL
   jr z, .out        ; if char is an end sentinel, stop scanning
@@ -519,11 +519,13 @@ ScanWord:
 .skip_excess_chars
   ld a, [hl]
   cp a, c
-  jr z, .out        ; if found delim, done now
+  jr z, .final_delim ; if found delim, done now
   cp a, END_SENTINEL
   jr z, .out        ; if found end, done now
   inc hl            ; consume extra word char
   jr .skip_excess_chars
+.final_delim
+  inc hl            ; consume one trailing delim
 .out
   ld a, b
   ld [WordLen], a
