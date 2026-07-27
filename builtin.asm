@@ -310,7 +310,7 @@ ENDM
   DROP
   ld a, d           ; shift amount to a
 .shift
-  cp a, 0
+  or a, a
   jr z, .out        ; if shift amount is 0, done
   sla c
   rl b
@@ -325,7 +325,7 @@ ENDM
   DROP
   ld a, d           ; shift amount to a
 .shift
-  cp a, 0
+  or a, a
   jr z, .out        ; if shift amount is 0, done
   srl b
   rr c
@@ -863,7 +863,7 @@ ENDM
   call ScanUnsignedNumber
   pop hl
   ld a, e
-  cp a, 0           ; no chars consumed means not a number
+  or a, a           ; no chars consumed means not a number
   jp z, Error
   NEXT
 
@@ -1031,7 +1031,7 @@ ENDM
   push bc
   ; BC has the word pointer to find.
   call LookupWord
-  cp a, 0
+  or a, a
   jr z, .not_found  ; 0 -> word is not found
   ld b, h           ; set top of stack to result pointer
   ld c, l
@@ -1058,11 +1058,11 @@ ENDM
   PUSH16 " "
   call _WORD        ; scan the next word of input
   ld a, [bc]        ; get length of the word
-  cp a, 0           ; 
+  or a, a           ;
   jp z, Error       ; eof after ' is always an error
   call _FIND        ; try to look up the word
   ld a, c           ; get lookup result flags
-  cp a, 0           ; 0 means not found
+  or a, a           ; 0 means not found
   jp z, Error       ; missing word after ' is an error
   DROP              ; drop flags from find leaving xt on stack
   NEXT
@@ -1410,7 +1410,7 @@ ENDM
   call _WORD        ; scan the next word of input
   ld a, [bc]        ; get length of the word
   ld d, a           ; save it in d
-  cp a, 0           ; test if zero -> eof
+  or a, a           ; test if zero -> eof
   jp z, Error       ; eof after CREATE is always an error
   push hl           ; save stack pointer
   ld a, [Here+1]    ; get current here pointer
@@ -2290,11 +2290,11 @@ PatchTargets:
   PUSH16 " "
   call _WORD        ; scan the next word of input
   ld a, [bc]        ; get length of the word
-  cp a, 0           ; 
+  or a, a           ;
   jr z, .eof        ; length 0 means we hit eof
   call _FIND        ; try to look up the word
   ld a, c           ; get find result flags in a
-  cp a, 0
+  or a, a
   jr z, .number     ; 0 -> word not found, assume number instead
   cp a, 1
   jr z, .run_word   ; 1 -> immediate word, execute word now

@@ -27,6 +27,7 @@ CurPage: db
 PageBasePtr: dw
 PagePtr: dw
 Editing: db
+SavedPagePtr: dw    ; editor position before running program
 
 ; A ram trampoline to jump via an indirect pointer.
 Indirect: ds 3
@@ -303,6 +304,24 @@ Editor:
   ; fall through to interpreter
 
 Interpreter:
+  ; Clear tilemap for output and reset cursor position
+  di
+  ld hl, TILEMAP0
+  ld bc, TILEMAP_AREA
+  ld d, SC
+  call FillMemory
+  ; Save current cursor position for after program runs
+  ld a, [PagePtr]
+  ld [SavedPagePtr], a
+  ld a, [PagePtr+1]
+  ld [SavedPagePtr+1], a
+  ld a, 0           ; clear cursor position for output
+  ld [CursorY], a
+  ld [CursorX], a
+  ld a, LOW(TILEMAP0)
+  ld [CursorPtr], a
+  ld a, HIGH(TILEMAP0)
+  ld [CursorPtr+1], a
   ; Start from the beginning of the program.
   ld a, 0
   ld [Editing], a
@@ -310,6 +329,7 @@ Interpreter:
   ld [ScanPtr], a
   ld a, HIGH(SaveData)
   ld [ScanPtr+1], a
+  ei
   ; _QUIT is the canonical name of the forth repl loop...
   call _QUIT
 
@@ -323,6 +343,17 @@ Done:
   ld a, [NewButtons]; DULRSEBA
   and a, $8         ; if start is pressed, go ahead
   jr z, Done
+.wait_for_release
+  halt
+  nop
+  ld a, [NewButtons]; DULRSEBA
+  and a, $8         ; if start is still pressed, wait
+  jr nz, .wait_for_release
+  ; Restore old cursor position prior to starting program
+  ld a, [SavedPagePtr]
+  ld [ScanPtr], a
+  ld a, [SavedPagePtr+1]
+  ld [ScanPtr+1], a
   call MoveCursorToScanPtr
   jp Editor
 
@@ -549,7 +580,7 @@ LookupWord:
 UnsignedMul16By8:
   ld hl, 0          ; accumulate 16-bit product in hl
 .mul
-  cp a, 0
+  or a, a           ; test a
   jr z, .out        ; if multiplier is 0, we are done
   srl a             ; halve multiplier and get next bit in carry
   jr nc, .no_add    ; if even, don't accumulate
@@ -715,7 +746,7 @@ VBlankInterrupt:
   ; If there is any output queued, prioritize printing it.
   ; We only print one character per vblank.
   ld a, [PrintQueueLength]
-  cp a, 0
+  or a, a           ; test if any queued characters
   jr nz, .pop_print_queue
 
   call UpdateButtons
@@ -869,7 +900,7 @@ VBlankPutCharInSaveRam:
 
 CursorBack:
   ld a, [CursorX]
-  cp a, 0
+  or a, a
   jr z, .no_back
   dec a
   ld [CursorX], a
@@ -886,7 +917,7 @@ CursorAdvance:
 
 CursorUp:
   ld a, [CursorY]
-  cp a, 0
+  or a, a
   jr z, UpDownStoreY
   dec a
   jr UpDownStoreY
@@ -911,6 +942,7 @@ MoveCursor:
   ld b, a
   call VBlankPutChar
   ld a, [Editing]
+  or a, a           ; test if editing
   call nz, VBlankPutCharInSaveRam
 DoMoveCursor:
   ; Compute new cursor offset in de
