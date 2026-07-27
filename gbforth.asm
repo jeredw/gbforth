@@ -28,7 +28,7 @@ PageBasePtr: dw
 PagePtr: dw
 Editing: db
 
-; A ram trampoline to call via an indirect pointer.
+; A ram trampoline to jump via an indirect pointer.
 Indirect: ds 3
 EXPORT Indirect
 
@@ -154,6 +154,7 @@ Boot:
   ; Init globals in WRAM.
   ld a, 1
   ld [CursorY], a
+  ld a, 1
   ld [Editing], a
   ld a, LOW($9820)
   ld [CursorPtr], a
@@ -184,7 +185,7 @@ Boot:
   ld [StackSentinel], a
   ld a, LOW(STACK_SENTINEL)
   ld [StackSentinel+1], a
-  ld a, $cd         ; set up trampoline
+  ld a, $c3         ; set up trampoline for indirect jumps
   ld [Indirect], a
 
   ; Copy tiles for font into VRAM at $8000
@@ -290,23 +291,90 @@ Boot:
   ld [rIE], a
   ei
 
-  ; Start scanning from the beginning of the program.
+Editor:
+  ; The editor updates during vblank and otherwise does nothing.
+  ld a, 1
+  ld [Editing], a
+  halt
+  nop
+  ld a, [NewButtons]; DULRSEBA
+  and a, $8         ; if start is pressed, enter interpreter
+  jr z, Editor
+  ; fall through to interpreter
+
+Interpreter:
+  ; Start from the beginning of the program.
+  ld a, 0
+  ld [Editing], a
   ld a, LOW(SaveData)
   ld [ScanPtr], a
   ld a, HIGH(SaveData)
   ld [ScanPtr+1], a
+  ; _QUIT is the canonical name of the forth repl loop...
+  call _QUIT
 
-; The interpreter loop runs during the frame
-Main:
-  halt 
-  nop 
-  jr Main
+; Flag program done executing. Tell the user, unwind the stack and bail.
+EXPORT Done
+Done:
+  ; TODO flag done somehow (cursor?)
+  ; Pause so the user can see output.
+  halt
+  nop
+  ld a, [NewButtons]; DULRSEBA
+  and a, $8         ; if start is pressed, go ahead
+  jr z, Done
+  call MoveCursorToScanPtr
+  jp Editor
+
+; Flag an error condition. Unwind the stack and bail.
+EXPORT Error
+Error:
+  call MoveCursorToScanPtr
+  ; TODO flag error somehow (cursor?)
+  jp Editor
+
+MoveCursorToScanPtr:
+  ; Turn off output so we can load the correct page into vram.
+  di
+  call DisableLCD
+  ; Subtract ScanPtr from base address.
+  ld a, [ScanPtr]
+  sub a, LOW(SaveData)
+  ld c, a
+  ld a, [ScanPtr+1]
+  sbc a, HIGH(SaveData)
+  ld b, a
+  push bc
+  ; Divide by 1024 to get page
+  srl a             ; high byte is in a, divide by 256 * 4
+  srl a
+  call LoadPageWithLCDDisabled ; load page #
+  ; Get offset in page
+  pop bc
+  ld a, c           ; compute x = offset % 32
+  and a, $1f
+  ld [CursorX], a
+  ld a, b           ; compute y = offset / 32
+  and a, $3
+  rl c              ; rotate 3 bits up into a
+  rl a
+  rl c
+  rl a
+  rl c
+  rl a
+  ld [CursorY], a
+  ; Call editor routine to update screen state for the selected position.
+  call DoMoveCursor
+  ; Turn on output again
+  call EnableLCD
+  ei
+  ret
 
 ; Prints the signed number BC.
 EXPORT PutSignedNumber
 PutSignedNumber:
   bit 7, b
-  jr z, .print_digits ; if sign bit is 0, just print magnitude
+  jr z, PutUnsignedNumber ; if sign bit is 0, just print magnitude
   ld a, "-"
   call PutChar      ; print minus sign
   ld a, b           ; negate the number
@@ -316,10 +384,7 @@ PutSignedNumber:
   cpl
   ld c, a
   inc bc
-.print_digits
-  call PutUnsignedNumber
-  ret
-
+  ; fall through to PutUnsignedNumber
 ; Prints the unsigned number BC.
 EXPORT PutUnsignedNumber
 PutUnsignedNumber:
@@ -460,7 +525,10 @@ LookupWord:
   ld [WordFlags], a ; stash flags in case 
   and a, FLAG_HIDDEN | $1f ; mask length (+ skip hidden words)
   ld d, a           ; save length count in d
-  inc d             ; prefixed length must also match
+  ld a, [bc]        ; get length from input
+  inc bc            ; consume char
+  cp a, d           ; check if length matches
+  jr nz, .no_match  ; if length doesn't match, does not match
 .compare_word
   ld a, [bc]        ; next char of input
   cp a, [hl]        ; next char of dictionary
@@ -475,20 +543,6 @@ LookupWord:
   pop de            ;
   ld a, [WordFlags]
   ret
-
-; Flag an error condition. Unwind the stack and bail.
-EXPORT Error
-Error:
-  ; TODO
-  halt
-  jr Error
-
-; Flag program done executing. Tell the user, unwind the stack and bail.
-EXPORT Done
-Done:
-  ; TODO
-  halt
-  jr Error
 
 ; Multiplies BC by the 8-bit value in A.
 ; Returns product in BC. Clobbers HL.
@@ -639,7 +693,10 @@ LoadPageWithLCDDisabled:
   rlca
   or a, HIGH(SaveData) ; ram + page offset
   ld d, a           ; de = page offset
+  ld [PageBasePtr+1], a
   ld e, LOW(SaveData)
+  ld a, e
+  ld [PageBasePtr], a
   ld hl, TILEMAP0
   ld bc, TILEMAP_AREA
   jp CopyMemory
@@ -849,11 +906,13 @@ UpDownStoreY:
 
 ; Adjust cursor position
 MoveCursor:
+  ; Replace character at old cursor position
   ld a, [CurChar]
   ld b, a
   call VBlankPutChar
   ld a, [Editing]
   call nz, VBlankPutCharInSaveRam
+DoMoveCursor:
   ; Compute new cursor offset in de
   xor a             ; clear a and carry
   ld e, a           ; clear e

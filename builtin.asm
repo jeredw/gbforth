@@ -925,6 +925,7 @@ ENDM
   DEFCODE "S?", _S_DELIM, FLAG_IMMEDIATE
   call _PARSE       ; push string pointer and length
   ld a, [State]
+  or a, a           ; test state
   jr z, .out        ; if interpreting, just leave stuff on the stack
   call _SWAP        ; swap them so we can push pointer first
   call _LITERAL     ; append code to push string pointer
@@ -943,6 +944,7 @@ ENDM
   PUSH16 ")"
   call _S_DELIM     ; scan forward to ) delimiter, and generate pushes
   ld a, [State]
+  or a, a           ; test state
   jr nz, .compiling
   call _TYPE        ; if interpreting, print immediately
   NEXT
@@ -955,6 +957,7 @@ ENDM
   DEFCODE ".\"", _DOT_QUOTE, FLAG_IMMEDIATE
   call _S_QUOTE     ; generate code to push an address and length
   ld a, [State]
+  or a, a           ; test state
   jr nz, .compiling
   call _TYPE        ; if interpreting, print immediately
   NEXT
@@ -1552,6 +1555,7 @@ def DOES_OFFSET    equ $7
 ; IS sets a name to execute xt. ( xt "<spaces>name" -- )
   DEFCODE "IS", _IS, FLAG_IMMEDIATE
   ld a, [State]
+  or a, a           ; test state
   jr nz, .compiling
   call _TICK        ; look up the next word
   call _DEFER_STORE ; set jp target in defer definition
@@ -1565,6 +1569,7 @@ def DOES_OFFSET    equ $7
 ; ACTION-OF returns the action of a deferred word. ( "<spaces>name" -- xt )
   DEFCODE "ACTION-OF", _ACTION_OF, FLAG_IMMEDIATE
   ld a, [State]
+  or a, a           ; test state
   jr nz, .compiling
   call _TICK        ; look up the next word
   call _DEFER_FETCH ; get target in defer definition
@@ -1608,6 +1613,7 @@ def VALUE_OFFSET   equ $5
 ; Modifies the value stored in a VALUE entry.
   DEFCODE "TO", _TO_, 0
   ld a, [State]
+  or a, a           ; test state
   jr nz, .compiling
   call _TO_RUNTIME
   NEXT
@@ -1706,13 +1712,12 @@ def VALUE_OFFSET   equ $5
 
 ; Executes the word address on the stack. ( xt -- )
   DEFCODE "EXECUTE", _EXECUTE, 0
-  ld a, c           ; load the address into a prepared CALL in ram
+  ld a, c           ; load the address into a prepared JP in ram
   ld [Indirect+1], a
   ld a, b
   ld [Indirect+2], a
   DROP              ; drop xt
-  call Indirect     ; execute and then return here
-  NEXT
+  jp Indirect       ; execute and then return to caller
 
 ; Exits the current word ( -- )
   DEFCODE "EXIT", _EXIT, 0
@@ -2295,6 +2300,7 @@ PatchTargets:
   jr z, .run_word   ; 1 -> immediate word, execute word now
   ; found a compiled word
   ld a, [State]
+  or a, a           ; test state
   jr z, .run_word   ; if interpreting, execute word now
   ; else we are compiling and found a compiled word
   DROP              ; drop flags
@@ -2310,10 +2316,12 @@ PatchTargets:
   DROP              ; discard missing word and reset top
   call _NUMBER      ; push the number
   ld a, [State]
+  or a, a           ; test state
   call nz, _LITERAL ; if compiling, append code to push
   jr .next_word
 .eof
   ld a, [State]
+  or a, a           ; test state
   jp z, Done        ; eof when interpreting -> done
   jp Error          ; else eof when compiling -> error
 

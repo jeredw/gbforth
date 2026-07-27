@@ -1,3 +1,4 @@
 *.o
 gbforth.gb
 gbforth.sav
+gbforth.sym
