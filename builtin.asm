@@ -1109,7 +1109,7 @@ ENDM
   ; Compile call DUP / ld bc, XXXX to implement the PUSH16 sequence.
   PUSH16 _DUP       ; call DUP
   call _COMPILE_COMMA
-  ld e, $01         ; append "ld bc, XXXX"
+  ld d, $01         ; append "ld bc, XXXX"
   call AppendCode
   DROP
   NEXT
@@ -1473,7 +1473,7 @@ ENDM
   call _ALIGNED     ; align data address if necessary
   call _LITERAL     ; append code to push data address
   ; _LITERAL popped data address, so now bc is the ret address again
-  ld e, $c3         ; jp opcode
+  ld d, $c3         ; jp opcode
   call AppendCode   ; append "jp <ret>"
   ld bc, $c9        ; clobber top of stack with ret opcode
   call _C_COMMA     ; append "ret" (and pop stack)
@@ -1520,7 +1520,7 @@ def DOES_OFFSET    equ $7
   inc bc            ; skip over jp itself to get to ret
   inc bc
   inc bc
-  ld e, $c3         ; jp opcode
+  ld d, $c3         ; jp opcode
   call AppendCode   ; append "jp YYYY"
   ld bc, $c9        ; clobber top of stack with ret opcode
   call _C_COMMA     ; append "ret" (and pop)
@@ -1705,7 +1705,7 @@ def VALUE_OFFSET   equ $5
 
 ; Appends code to execute the given word address at HERE. ( xt -- )
   DEFCODE "COMPILE,", _COMPILE_COMMA, 0
-  ld e, $cd         ; $cd is a call instruction
+  ld d, $cd         ; $cd is a call instruction
   call AppendCode   ; append "CALL XXXX" with XXXX from top of stack
   DROP
   NEXT
@@ -1930,7 +1930,7 @@ def VALUE_OFFSET   equ $5
   NEXT
 
 ; Ends the current definition. ( -- )
-  DEFCODE ";", _SEMICOLON, 0
+  DEFCODE ";", _SEMICOLON, FLAG_IMMEDIATE
   PUSH16 $c9        ; ret opcode
   call _C_COMMA     ; append ret
   call _TOGGLE_HIDDEN ; unhide the word, it's ready

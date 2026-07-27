@@ -306,10 +306,12 @@ Editor:
 Interpreter:
   ; Clear tilemap for output and reset cursor position
   di
+  call DisableLCD
   ld hl, TILEMAP0
   ld bc, TILEMAP_AREA
   ld d, SC
   call FillMemory
+  call EnableLCD
   ; Save current cursor position for after program runs
   ld a, [PagePtr]
   ld [SavedPagePtr], a
