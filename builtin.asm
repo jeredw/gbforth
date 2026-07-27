@@ -855,11 +855,12 @@ ENDM
   DEFCODE "NUMBER", _NUMBER, 0
   DUP               ; make space to push result
   push hl
-  ; HL = the next input buffer position
-  ld a, LOW(WordLen+1)
+  ; Point to length before digits
+  ld a, LOW(WordLen)
   ld l, a
-  ld a, HIGH(WordLen+1)
+  ld a, HIGH(WordLen)
   ld h, a
+  ld a, [hli]       ; set A = buffer length
   call ScanUnsignedNumber
   pop hl
   ld a, e
@@ -1956,7 +1957,7 @@ def VALUE_OFFSET   equ $5
   ld [hli], a       ;
   ld a, $b1         ; or a, c
   ld [hli], a       ;
-  ld a, $c9         ; call _DROP
+  ld a, $cd         ; call _DROP
   ld [hli], a       ;
   ld a, LOW(_DROP)  ;
   ld [hli], a       ;

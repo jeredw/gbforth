@@ -169,18 +169,7 @@ Boot:
   ld [PagePtr], a
   ld a, HIGH(SaveData+$20)
   ld [PagePtr+1], a
-  ld a, 10
-  ld [Base], a
-  ld a, END_SENTINEL
-  ld [FormatBuf + FORMAT_BUF_LEN], a  ; one byte past end of usable buffer
-  ld a, LOW(last_entry)
-  ld [Latest], a
-  ld a, HIGH(last_entry)
-  ld [Latest+1], a
-  ld a, LOW(User)
-  ld [Here], a
-  ld a, HIGH(User)
-  ld [Here+1], a
+  call ResetProgramState
   ; to help with detecting stack underflows
   ld a, HIGH(STACK_SENTINEL)
   ld [StackSentinel], a
@@ -332,6 +321,8 @@ Interpreter:
   ld a, HIGH(SaveData)
   ld [ScanPtr+1], a
   ei
+  ; Reset the compiler state each time we run...
+  call ResetProgramState
   ; _QUIT is the canonical name of the forth repl loop...
   call _QUIT
 
@@ -365,6 +356,21 @@ Error:
   call MoveCursorToScanPtr
   ; TODO flag error somehow (cursor?)
   jp Editor
+
+ResetProgramState:
+  ld a, 10
+  ld [Base], a
+  ld a, END_SENTINEL
+  ld [FormatBuf + FORMAT_BUF_LEN], a  ; one byte past end of usable buffer
+  ld a, LOW(last_entry)
+  ld [Latest], a
+  ld a, HIGH(last_entry)
+  ld [Latest+1], a
+  ld a, LOW(User)
+  ld [Here], a
+  ld a, HIGH(User)
+  ld [Here+1], a
+  ret
 
 MoveCursorToScanPtr:
   ; Turn off output so we can load the correct page into vram.
@@ -444,10 +450,16 @@ PutUnsignedNumber:
   jr .print_digits
 
 ; Scans the unsigned number pointed to by HL into BC.
+; Scans at most A characters.
 ; Leaves HL at the character after the number.
 ; E counts how many characters were consumed.
 EXPORT ScanUnsignedNumber
 ScanUnsignedNumber:
+  cp a, 5           ; scan at most 5 characters
+  jr c, .set_limit  ; if a < 5, use that limit
+  ld a, 5           ; otherwise 5
+.set_limit
+  ld [Temp], a      ; save limit in temp
   ld b, 0           ; BC is the result
   ld c, 0
   ld e, 0           ; E counts how many characters scanned
@@ -477,8 +489,8 @@ ScanUnsignedNumber:
   ld a, 0
   adc b
   ld b, a
-  ld a, e
-  cp a, 5           ; only scan up to 5 characters
+  ld a, [Temp]      ; get limit
+  cp a, e           ; only scan up to limit characters
   ret z
   jr .scan_digit
 
