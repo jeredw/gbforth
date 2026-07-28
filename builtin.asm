@@ -724,30 +724,48 @@ ENDM
   push de           ; push caller again + ret
   NEXT
 
+; Transfer two items to return stack below return address.
+MACRO PUSH2R
+  pop de            ; save return address
+  push bc           ; R:( -- start ) 
+  DROP
+  push bc           ; R:( -- start limit )
+  DROP
+  push de           ; restore return address
+ENDM
+
+; Transfer two items from return stack below return address.
+MACRO POP2R
+  pop de            ; save R> caller address
+  DUP
+  pop bc            ; pop data
+  DUP
+  pop bc            ; pop data
+  push de           ; push caller again + ret
+ENDM
+
 ; Pop parameter stack twice and push return stack.
 ; ( x1 x2 -- ) ( R: -- x1 x2 )
   DEFCODE "2>R", _2_TO_R, 0
   call _SWAP
-  call _TO_R
-  call _TO_R
+  PUSH2R
   NEXT
 
 ; Pop return stack twice and push onto parameter stack.
 ; ( -- x1 x2 ) ( R: x1 x2 -- )
   DEFCODE "2R>", _2_R_FROM, 0
-  call _R_FROM
-  call _R_FROM
+  POP2R
   call _SWAP
   NEXT
 
 ; Copy twice from the return stack to the parameter stack.
 ; ( -- x1 x2 ) ( R: x1 x2 -- x1 x2 )
   DEFCODE "2R@", _2_R_FETCH, 0
-  call _R_FROM      ; ( -- x2 ) ( R: x1 x2 -- x1 )
-  call _R_FROM      ; ( x1 -- x2 x1 ) ( R: x1 -- )
+  POP2R             ; ( -- x2 ) ( R: x1 x2 -- x1 )
+                    ; ( x1 -- x2 x1 ) ( R: x1 -- )
   call _2DUP        ; ( x2 x1 -- x2 x1 x2 x1 ) ( R: -- )
-  call _TO_R        ; ( x2 -- x2 x1 x2 ) ( R: -- x1 )
-  call _TO_R        ; ( -- x2 x1 ) ( R: -- x1 x2 )
+  PUSH2R            ; ( x2 -- x2 x1 x2 ) ( R: -- x1 )
+                    ; ( -- x2 x1 ) ( R: -- x1 x2 )
   call _SWAP        ; ( -- x1 x2 ) ( R: -- x1 x2 )
   NEXT
 
@@ -2160,9 +2178,7 @@ PatchTargets:
 
 ; Runtime setup for DO. ( limit start -- )
   DEFCODE "(DO)", _DO_RUNTIME, 0
-  call _SWAP
-  call _TO_R        ; R:( -- start ) 
-  call _TO_R        ; R:( -- start limit )
+  PUSH2R            ; R:( -- limit start )
   NEXT
 
 ; Check whether ?DO loop bounds are sane. ( limit start -- flag )
@@ -2170,8 +2186,7 @@ PatchTargets:
   call _2DUP        ; ( -- limit start limit start )
   call _EQUALS      ; ( -- limit start flag )
   call _M_ROT       ; ( -- flag limit start )
-  call _TO_R        ; R:( -- start ) ( -- flag limit )
-  call _TO_R        ; R:( -- start limit ) ( -- flag )
+  PUSH2R            ; R:( -- limit start ) ( -- flag )
   NEXT
 
 ; Runtime stepping for LOOP and +LOOP.
@@ -2188,7 +2203,7 @@ PatchTargets:
   ld hl, sp+8       ; point at loop counter
   ld a, [hli]       ; fetch loop counter
   ld c, a
-  ld a, [hli]
+  ld a, [hl]
   ld b, a
   ld a, c           ; add increment to the counter
   add e
@@ -2202,17 +2217,17 @@ PatchTargets:
   ld [hld], a
   ld a, [hld]       ; load de = loop limit
   ld d, a
-  ld a, [hld]
+  ld a, [hl]
   ld e, a
-  pop bc
-  pop hl
-  ; check if the loop counter is at its limit
+  ; check if the new loop counter is at its limit
   ld a, b
   cp a, d
   jr nz, .continue
   ld a, c
   cp a, e
   jr nz, .continue
+  pop bc
+  pop hl
   pop de            ; save return address
   pop af            ; discard loop counters
   pop af
@@ -2220,6 +2235,8 @@ PatchTargets:
   PUSH16 TRUE       ; flag that we are done
   NEXT
 .continue
+  pop bc
+  pop hl
   PUSH16 FALSE      ; flag that loop is not done
   NEXT
 
@@ -2263,8 +2280,7 @@ PatchTargets:
 
 ; Removes the current loop counter and limit from the return stack.
   DEFCODE "UNLOOP", _UNLOOP, 0
-  call _R_FROM      ; pop return stack twice
-  call _R_FROM
+  POP2R             ; pop return stack twice
   NEXT
 
 ; In standard forth ABORT drops back into the interpreter.
