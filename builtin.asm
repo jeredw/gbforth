@@ -890,9 +890,9 @@ ENDM
   DEFCODE "CHAR", _CHAR, 0
   PUSH16 " "
   call _WORD        ; scan the next space delimited word
-  ld a, [WordLen+1]
   DUP               ; push the first character
   ld b, 0
+  ld a, [WordLen+1]
   ld c, a
   NEXT
 
@@ -1610,13 +1610,31 @@ def DOES_OFFSET    equ $7
 ; Creates a new entry that pushes an address for some aligned data.
   DEFCODE "VARIABLE", _VARIABLE, 0
   call _CREATE_EMPTY ; create a new, empty dictionary entry
-  call _ALIGN       ; align to cell boundary
   call _HERE        ; push address
-  PUSH16 1          ; reserve one cell for value
-  call _ALLOT
-  call _LITERAL     ; append code to push variable address
+  PUSH16 7
+  call _PLUS        ; skip over code
+  call _ALIGNED     ; skip extra byte for alignment
+  call _LITERAL     ; append code to push variable address (+6B)
   PUSH16 $c9
-  call _C_COMMA     ; append "ret"
+  call _C_COMMA     ; append "ret" (+1B)
+  call _ALIGN
+  PUSH16 2          ; reserve one cell for value
+  call _ALLOT
+  NEXT
+
+; Creates a new entry that pushes an address for some aligned data.
+  DEFCODE "2VARIABLE", _2VARIABLE, 0
+  call _CREATE_EMPTY ; create a new, empty dictionary entry
+  call _HERE        ; push address
+  PUSH16 7
+  call _PLUS        ; skip over code
+  call _ALIGNED     ; skip extra byte for alignment
+  call _LITERAL     ; append code to push variable address (+6B)
+  PUSH16 $c9
+  call _C_COMMA     ; append "ret" (+1B)
+  call _ALIGN
+  PUSH16 4          ; reserve two cells for value
+  call _ALLOT
   NEXT
 
 ; Creates a new entry that loads a modifiable literal value. ( x "<spaces>name" -- )
@@ -2002,7 +2020,7 @@ def VALUE_OFFSET   equ $5
   ld l, a
   ld a, [Here+1]
   ld h, a
-  ld a, $ca         ; jp XXXX
+  ld a, $c3         ; jp XXXX
   ld [hli], a       ;
   ld b, h           ; save target
   ld c, l
