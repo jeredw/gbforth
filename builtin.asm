@@ -1785,6 +1785,14 @@ def VALUE_OFFSET   equ $5
   pop hl
   NEXT
 
+; Moves down to the next line.
+  DEFCODE "CR", _CR, 0
+  push hl
+  ld a, CR
+  call PutChar
+  pop hl
+  NEXT
+
 ; Prints a character. ( x -- )
   DEFCODE "EMIT", _EMIT, 0
   push hl

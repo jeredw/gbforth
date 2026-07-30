@@ -81,6 +81,7 @@ EXPORT SaveData
 EXPORT SAVE_SIZE
 
 ; Editor control codes
+export CR
 def CR equ 13
 def UP equ 24
 def DN equ 25
