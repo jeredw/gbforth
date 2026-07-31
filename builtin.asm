@@ -1148,6 +1148,7 @@ ENDM
   inc bc            ; skip previous entry pointer
   inc bc
   ld a, [bc]        ; read name length
+  inc bc            ; skip past length
   and a, $3f        ; mask length bytes
   add a, c          ; add length to pointer
   ld c, a
@@ -1506,6 +1507,7 @@ ENDM
   call AppendCode   ; append "jp <ret>"
   ld bc, $c9        ; clobber top of stack with ret opcode
   call _C_COMMA     ; append "ret" (and pop stack)
+  call _ALIGN       ; actually align for data if needed
   NEXT
 
 ; How far into a CREATE word is the pointer we need to patch up for DOES>.
@@ -1517,6 +1519,14 @@ def DOES_OFFSET    equ $7
   ; need to compile code to patch up the DOES pointer in the newly
   ; created entry. Note we want this to happen when CREATE executes,
   ; at runtime.
+  call _HERE        ; save DOES code pointer for runtime
+  ld a, c           ; offset to just past ret address
+  add a, 10         ; +6B for literal, +3B for call, +1B for ret
+  ld c, a
+  ld a, b
+  adc a, 0
+  ld b, a
+  call _LITERAL
   PUSH16 _DOES_RUNTIME
   call _COMPILE_COMMA
   ; Return early from the current definition. The remainder of its code
@@ -1527,8 +1537,7 @@ def DOES_OFFSET    equ $7
 
 ; Patches the DOES pointer in the LATEST entry. See CREATE and DOES>.
   DEFCODE "(DOES>)", _DOES_RUNTIME, 0
-  call _HERE        ; HERE will be a ret in the current definition
-  inc bc            ; the DOES code is just past the ret
+  ; top of stack is a code pointer for DOES
   call _LATEST      ; we need to store this in the LATEST entry
   call _TO_BODY     ; skip past the header
   PUSH16 DOES_OFFSET
