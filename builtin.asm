@@ -437,21 +437,31 @@ ENDM
 
 ; Divides elements on stack n1 / n2 ( n1 n2 -- n3 )
   DEFCODE "/", _SLASH, 0
-  ld a, [hld]       ; pop de
-  ld e, a
-  ld a, [hld]
-  ld d, a
+  ld d, b           ; denominator in de
+  ld e, c
+  DROP              ; pop numerator in bc
   push hl           ; save stack pointer 
   call UnsignedDiv16By16 ; set bc = n1 / n2
   pop hl            ; restore stack pointer
   NEXT
 
+; Mods elements on stack n1 % n2 ( n1 n2 -- remainder )
+  DEFCODE "MOD", _MOD, 0
+  ld d, b           ; denominator in de
+  ld e, c
+  DROP              ; pop numerator in bc
+  push hl           ; save stack pointer 
+  call UnsignedDiv16By16 ; set bc = n1 / n2
+  pop hl            ; restore stack pointer
+  ld b, d           ; get remainder in bc
+  ld c, e
+  NEXT
+
 ; Divides elements on stack n1 / n2 ( n1 n2 -- remainder quotient )
   DEFCODE "/MOD", _SLASH_MOD, 0
-  ld a, [hld]       ; pop de
-  ld e, a
-  ld a, [hld]
-  ld d, a
+  ld d, b           ; denominator in de
+  ld e, c
+  DROP              ; pop numerator in bc
   push hl           ; save stack pointer 
   call UnsignedDiv16By16 ; set bc = n1 / n2, de = n1 % n2
   pop hl            ; restore stack pointer
