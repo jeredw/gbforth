@@ -46,6 +46,8 @@ Latest: dw          ; Points to the most recent dictionary entry
 EXPORT Latest
 Temp: dw            ; Temporary for sorting out stack messes
 EXPORT Temp
+Temp2: dw           ; Temporary for sorting out stack messes
+EXPORT Temp2
 WordFlags: db       ; Header of the current dictionary entry
 EXPORT WordFlags
 
@@ -105,7 +107,7 @@ def KEY_REPEAT_RATE  equ $4   ; frames between repeats
 
 ; Use up to 31 columns and scroll when we hit the last column, so that we don't
 ; wrap around and show the first character offscreen to the right.
-def MAX_COLUMN    equ TILEMAP_WIDTH - 1
+def MAX_COLUMN    equ TILEMAP_WIDTH
 def SCROLL_COLUMN equ SCREEN_WIDTH - 1
 def SCROLL_ROW    equ SCREEN_HEIGHT - 5
 
@@ -450,50 +452,75 @@ PutUnsignedNumber:
   pop hl
   jr .print_digits
 
-; Scans the unsigned number pointed to by HL into BC.
-; Scans at most A characters.
+; Scans the unsigned number pointed to by HL (with length A) into BC.
+; The first character may be a special character selecting the base,
+; otherwise we use [Base].
+; Carry is clear if success, otherwise set if an error.
 ; Leaves HL at the character after the number.
-; E counts how many characters were consumed.
 EXPORT ScanUnsignedNumber
 ScanUnsignedNumber:
-  cp a, 5           ; scan at most 5 characters
-  jr c, .set_limit  ; if a < 5, use that limit
-  ld a, 5           ; otherwise 5
-.set_limit
-  ld [Temp], a      ; save limit in temp
-  ld b, 0           ; BC is the result
-  ld c, 0
-  ld e, 0           ; E counts how many characters scanned
-.scan_digit:
+  or a, a           ; test buffer length
+  jr z, .error      ; if buffer is empty, not a number
+  ld d, a           ; D = length remaining
+  ; Check if selecting a different base.
+  ld a, [hl]        ; peek first character
+  cp a, "$"
+  jr z, .hex        ; if $ scan hex number
+  cp a, "%"
+  jr z, .binary     ; if % scan binary number
+  ld a, [Base]      ; else use default conversion base
+  jr .set_base
+.binary
+  inc hl            ; consume base char
+  dec d
+  ld a, 2           ; base 2
+  jr .set_base
+.hex
+  inc hl            ; consume base char
+  dec d
+  ld a, 16          ; base 16
+.set_base
+  ld e, a           ; E = base
+  ld bc, 0          ; BC = result
+.scan_digit
   ld a, [hl]        ; get next char of buffer
   sub a, "0"
-  ret c             ; < '0' is not a digit
+  jr c, .error      ; < '0' is not a digit
   cp a, 10
   jr c, .digit      ; <= '9' is a digit
   and a, $3f        ; convert to uppercase
   sub a, "A"-"0"    ; get character relative to 'A'
-  ret c             ; < 'A' is not a digit
+  jr c, .error      ; < 'A' is not a digit
   cp a, "Z"+1       ;
-  ret nc            ; > 'Z' is not a digit
-  add a, 10
+  jr nc, .error     ; > 'Z' is not a digit
+  add a, 10         ; letters are digits over 10
 .digit
-  inc hl            ; consume this character
-  inc e             ; count characters
+  cp a, e           ;
+  jr nc, .error     ; > base is not a digit
+  jr z, .error      ; = base is also not a digit
+  inc hl            ; consume character
+  dec d             ;
+  ; Shift current number accumulator over by base.
   push af
   push hl
-  ld a, [Base]
-  call UnsignedMul16By8 ; bc * 10
+  ld a, e
+  call UnsignedMul16By8 ; bc * base
   pop hl
   pop af
-  add a, c          ; (bc * 10) + a 
+  ; Add in the next digit.
+  add a, c          ; (bc * base) + a
   ld c, a
   ld a, 0
   adc b
   ld b, a
-  ld a, [Temp]      ; get limit
-  cp a, e           ; only scan up to limit characters
-  ret z
-  jr .scan_digit
+  ld a, d           ; check whether any digits remain
+  or a, a
+  jr nz, .scan_digit
+  or a, a           ; clear carry to indicate success
+  ret
+.error
+  scf               ; set carry to flag error
+  ret
 
 ; Scans the next word from [HL] into FormatBuf delimited by character C.
 ;

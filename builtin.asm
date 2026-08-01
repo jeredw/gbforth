@@ -891,9 +891,7 @@ ENDM
   ld a, [hli]       ; set A = buffer length
   call ScanUnsignedNumber
   pop hl
-  ld a, e
-  or a, a           ; no chars consumed means not a number
-  jp z, Error
+  jp c, Error       ; carry means error
   NEXT
 
 ; Parses a word and then returns its first character.
