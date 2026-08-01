@@ -894,12 +894,11 @@ ENDM
   jp c, Error       ; carry means error
   NEXT
 
-; Parses a word and then returns its first character.
+; Parses a word and then returns its first character. ( "<spaces>name" -- char )
   DEFCODE "CHAR", _CHAR, 0
   PUSH16 " "
   call _WORD        ; scan the next space delimited word
-  DUP               ; push the first character
-  ld b, 0
+  ld b, 0           ; replace pointer on stack with first char
   ld a, [WordLen+1]
   ld c, a
   NEXT
@@ -1789,6 +1788,7 @@ def VALUE_OFFSET   equ $5
   call PutChar
   pop bc
   pop hl
+  DROP              ; pop number
   NEXT
 
 ; Prints an unsigned number. ( u -- )
@@ -1800,6 +1800,7 @@ def VALUE_OFFSET   equ $5
   call PutChar
   pop bc
   pop hl
+  DROP              ; pop number
   NEXT
 
 ; Moves down to the next line.
@@ -1816,6 +1817,7 @@ def VALUE_OFFSET   equ $5
   ld a, c
   call PutChar
   pop hl
+  DROP              ; pop character
   NEXT
 
 ; Prints a string given a separate length. ( address length -- )
@@ -2191,7 +2193,7 @@ PatchTargets:
   PUSH16 _LOOP_RUNTIME ; compile a call to the plus loop step
   call _COMPILE_COMMA
   ld a, [Here]      ; de = beyond loop
-  add a, 3
+  add a, 8          ; past 0branch (ld/or/call/jp z)
   ld e, a
   ld a, [Here+1]
   adc a, 0
@@ -2227,7 +2229,7 @@ PatchTargets:
 ; Check whether ?DO loop bounds are sane. ( limit start -- flag )
   DEFCODE "(?DO)", _QUESTION_DO_RUNTIME, 0
   call _2DUP        ; ( -- limit start limit start )
-  call _EQUALS      ; ( -- limit start flag )
+  call _NOT_EQUALS  ; ( -- limit start flag )
   call _M_ROT       ; ( -- flag limit start )
   PUSH2R            ; R:( -- limit start ) ( -- flag )
   NEXT
