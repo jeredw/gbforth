@@ -282,19 +282,11 @@ ENDM
 
 ; Returns ones complement of a number. ( n1 -- n2 )
   DEFCODE "INVERT", _INVERT, 0
-  ld a, c
-  cpl
-  ld c, a
-  ld a, b
-  cpl
-  ld b, a
-  NEXT
+  jp Invert
 
 ; Negates a number. ( n -- u )
   DEFCODE "NEGATE", _NEGATE, 0
-  call _INVERT
-  inc bc
-  NEXT
+  jp Negate
 
 ; Returns the absolute value of of a number. ( n1 -- n2 )
   DEFCODE "ABS", _ABS, 0
@@ -889,7 +881,7 @@ ENDM
   ld a, HIGH(WordLen)
   ld h, a
   ld a, [hli]       ; set A = buffer length
-  call ScanUnsignedNumber
+  call ScanSignedNumber
   pop hl
   jp c, Error       ; carry means error
   NEXT

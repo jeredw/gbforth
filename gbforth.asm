@@ -422,13 +422,7 @@ PutSignedNumber:
   jr z, PutUnsignedNumber ; if sign bit is 0, just print magnitude
   ld a, "-"
   call PutChar      ; print minus sign
-  ld a, b           ; negate the number
-  cpl
-  ld b, a
-  ld a, c
-  cpl
-  ld c, a
-  inc bc
+  call Negate       ; negate the number
   ; fall through to PutUnsignedNumber
 ; Prints the unsigned number BC.
 EXPORT PutUnsignedNumber
@@ -455,16 +449,27 @@ PutUnsignedNumber:
   pop hl
   jr .print_digits
 
-; Scans the unsigned number pointed to by HL (with length A) into BC.
-; The first character may be a special character selecting the base,
-; otherwise we use [Base].
+; Scans the signed number pointed to by HL (with length A) into BC.
+; May start with - to indicate a negative number, followed by a 
+; special character selecting the base, otherwise we use [Base].
 ; Carry is clear if success, otherwise set if an error.
 ; Leaves HL at the character after the number.
-EXPORT ScanUnsignedNumber
-ScanUnsignedNumber:
+EXPORT ScanSignedNumber
+ScanSignedNumber:
   or a, a           ; test buffer length
   jr z, .error      ; if buffer is empty, not a number
   ld d, a           ; D = length remaining
+  ; Check for minus sign
+  xor a             ; clear A
+  ld [Temp], a      ; set Temp=0 to assume result is positive
+  ld a, [hl]
+  cp a, "-"         ; found -?
+  jr nz, .check_base
+  ld [Temp], a      ; set Temp=- to flag result negative
+  dec d             ; count minus sign consumed
+  jr z, .error      ; if no remaining digits error
+  inc hl            ; skip past minus sign
+.check_base
   ; Check if selecting a different base.
   ld a, [hl]        ; peek first character
   cp a, "$"
@@ -519,6 +524,9 @@ ScanUnsignedNumber:
   ld a, d           ; check whether any digits remain
   or a, a
   jr nz, .scan_digit
+  ld a, [Temp]      ; get saved sign
+  or a, a           ; test sign
+  call nz, Negate   ; negate if there was a minus sign
   or a, a           ; clear carry to indicate success
   ret
 .error
@@ -715,6 +723,24 @@ EXPORT UnsignedDiv16By16
   jr nz, .div
   ld d, h
   ld e, l
+  ret
+
+; Ones complement of bc
+EXPORT Invert
+Invert:
+  ld a, c
+  cpl
+  ld c, a
+  ld a, b
+  cpl
+  ld b, a
+  ret
+
+; Twos complement negate bc
+EXPORT Negate
+Negate:
+  call Invert
+  inc bc
   ret
 
 ; Prints the character from A.
