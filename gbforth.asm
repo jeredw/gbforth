@@ -46,8 +46,8 @@ Latest: dw          ; Points to the most recent dictionary entry
 EXPORT Latest
 Temp: dw            ; Temporary for sorting out stack messes
 EXPORT Temp
-Temp2: dw           ; Temporary for sorting out stack messes
-EXPORT Temp2
+Key: db             ; Input key from virtual keyboard
+EXPORT Key
 WordFlags: db       ; Header of the current dictionary entry
 EXPORT WordFlags
 
@@ -312,10 +312,13 @@ Interpreter:
   ld a, 0           ; clear cursor position for output
   ld [CursorY], a
   ld [CursorX], a
+  ld [Key], a       ; reset any buffered input key
   ld a, LOW(TILEMAP0)
   ld [CursorPtr], a
   ld a, HIGH(TILEMAP0)
   ld [CursorPtr+1], a
+  ld a, SC
+  ld [CurChar], a
   ; Start from the beginning of the program.
   ld a, 0
   ld [Editing], a
@@ -847,6 +850,9 @@ VBlankInterrupt:
   ld [PickerX], a
   jp .draw_cursor
 .backspace
+  ld a, [Editing]
+  or a, a
+  jr z, .draw_cursor        ; Disable backspace if not editing
   ld a, SC
   ld [CurChar], a
 .left
@@ -878,6 +884,11 @@ VBlankInterrupt:
   ld l, a
   ld h, HIGH(TILEMAP1)
   ld a, [hl]        ; get char from tilemap
+  push af
+  ld a, [Editing]
+  or a, a           ; test if we are editing
+  jr z, .input_char ; if not editing, input char offscreen
+  pop af
 .print_char
   cp a, CR          ; newline
   jr z, .newline
@@ -906,10 +917,14 @@ VBlankInterrupt:
 .right
   call CursorAdvance
 .draw_cursor
+  ld a, [Editing]
+  or a, a
+  jr z, .no_blink   ; Hide cursor if not editing
   ld b, 219         ; Show cursor on 1/4 of frames
   ld a, [FrameCounter]
   and a, 16
   jr z, .put
+.no_blink
   ld a, [CurChar]   ; Show char on frames 10-19
   ld b, a
 .put
@@ -917,6 +932,11 @@ VBlankInterrupt:
   ld a, [FrameCounter]
   inc a
   ld [FrameCounter], a
+  jr .out
+.input_char
+  pop af
+  ld [Key], a
+.out
   pop hl
   pop de
   pop bc

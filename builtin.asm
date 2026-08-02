@@ -1838,6 +1838,25 @@ def VALUE_OFFSET   equ $5
   DROP              ; pop address
   NEXT
 
+; Reads a key from the on screen keyboard. ( -- char )
+  DEFCODE "KEY", _KEY, 0
+  DUP               ; result
+  jr .test
+.wait
+  halt              ; wait for vblank
+  nop
+.test
+  ld a, [Key]       ; get pending key
+  or a, a
+  jr z, .wait       ; wait until key is nonzero
+  di
+  ld b, 0           ; save key
+  ld c, a
+  xor a             ; clear key buffer
+  ld [Key], a
+  ei
+  NEXT
+
 ; Stores a value x to addr. ( x addr -- )
   DEFCODE "!", _STORE, 0
   ld a, [hld]       ; get x low byte
@@ -2326,6 +2345,13 @@ PatchTargets:
 ; Removes the current loop counter and limit from the return stack.
   DEFCODE "UNLOOP", _UNLOOP, 0
   POP2R             ; pop return stack twice
+  NEXT
+
+; Turns address and length into range for a DO loop ( addr u -- addr+u addr )
+  DEFCODE "BOUNDS", _BOUNDS, 0
+  call _OVER
+  call _PLUS
+  call _SWAP
   NEXT
 
 ; In standard forth ABORT drops back into the interpreter.
