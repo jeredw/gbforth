@@ -1921,7 +1921,7 @@ def VALUE_OFFSET   equ $5
   NEXT
 
 ; Enter interpretation state. ( -- )
-  DEFCODE "[", _LEFT_BRACKET, 0
+  DEFCODE "[", _LEFT_BRACKET, FLAG_IMMEDIATE
   ld a, 0
   ld [State], a
   ld [State+1], a
@@ -2198,15 +2198,18 @@ PatchTargets:
 
 ; Compiles the backwards branch for an indexed do ... loop.
   DEFCODE "LOOP", _LOOP, FLAG_IMMEDIATE
-  PUSH16 1
-  call _LITERAL     ; compile default loop increment
-  call _PLUS_LOOP
-  NEXT
-
-; Compiles the backwards branch for an indexed do ... loop.
-  DEFCODE "+LOOP", _PLUS_LOOP, FLAG_IMMEDIATE
-  PUSH16 _LOOP_RUNTIME ; compile a call to the plus loop step
+  PUSH16 _LOOP_RUNTIME ; compile a call to the loop step
   call _COMPILE_COMMA
+  jp EndLoop
+
+; Compiles the backwards branch for an indexed do ... +loop.
+  DEFCODE "+LOOP", _PLUS_LOOP, FLAG_IMMEDIATE
+  PUSH16 _PLUS_LOOP_RUNTIME ; compile a call to the +loop step
+  call _COMPILE_COMMA
+  jp EndLoop
+
+; Compiles backwards loop branches for loop and +loop.
+EndLoop:
   ld a, [Here]      ; de = beyond loop
   add a, 8          ; past 0branch (ld/or/call/jp z)
   ld e, a
@@ -2249,29 +2252,20 @@ PatchTargets:
   PUSH2R            ; R:( -- limit start ) ( -- flag )
   NEXT
 
-; Runtime stepping for LOOP and +LOOP.
+; Runtime stepping for LOOP.
   DEFCODE "(LOOP)", _LOOP_RUNTIME, 0
-  ; Expect that the stack contains an increment.
-  ld d, b           ; pop the increment in de
-  ld e, c
-  DROP
   push hl
   push bc
   ; the return stack layout will look like
-  ; <bc> <hl> <RET> <limit> <start>
+  ; <bc> <hl> <RET> <limit> <index>
   ; SP   +2   +4    +6      +8
-  ld hl, sp+8       ; point at loop counter
-  ld a, [hli]       ; fetch loop counter
+  ld hl, sp+8       ; point at loop index
+  ld a, [hli]       ; fetch loop index
   ld c, a
   ld a, [hl]
   ld b, a
-  ld a, c           ; add increment to the counter
-  add e
-  ld c, a
-  ld a, b
-  adc d
-  ld b, a
-  ld a, b           ; store loop counter
+  inc bc            ; increment the index
+  ld a, b           ; store loop index
   ld [hld], a
   ld a, c
   ld [hld], a
@@ -2286,6 +2280,79 @@ PatchTargets:
   ld a, c
   cp a, e
   jr nz, .continue
+  pop bc
+  pop hl
+  pop de            ; save return address
+  pop af            ; discard loop counters
+  pop af
+  push de           ; put back return address
+  PUSH16 TRUE       ; flag that we are done
+  NEXT
+.continue
+  pop bc
+  pop hl
+  PUSH16 FALSE      ; flag that loop is not done
+  NEXT
+
+; Runtime stepping for +LOOP.
+  DEFCODE "(+LOOP)", _PLUS_LOOP_RUNTIME, 0
+  ; Expect that the stack contains an increment.
+  ld d, b           ; pop the increment in de
+  ld e, c
+  DROP
+  push hl
+  push bc
+  ; the return stack layout will look like
+  ; <bc> <hl> <RET> <limit> <index>
+  ; SP   +2   +4    +6      +8
+  ; First compute bc = old diff = index - limit for the current index.
+  ld hl, sp+8       ; point at loop index
+  ld a, [hli]       ; fetch loop index
+  ld c, a
+  ld a, [hl]
+  ld b, a
+  ld hl, sp+6       ; point at loop limit
+  ld a, c           ; subtract limit from index
+  sub a, [hl]
+  ld c, a
+  inc hl
+  ld a, b
+  sbc a, [hl]
+  ld b, a
+  push bc           ; stash diff
+  ; Next add the increment to the current counter.
+  ; Note the old diff is now on the stack.
+  ld hl, sp+10      ; point at loop index
+  ld a, [hli]       ; fetch loop index
+  ld c, a
+  ld a, [hl]
+  ld b, a
+  ld a, c           ; add increment to the counter
+  add e
+  ld c, a
+  ld a, b
+  adc d
+  ld b, a           ; store new loop counter
+  ld [hld], a
+  ld a, c
+  ld [hld], a
+  ; Compute bc = new diff = index - limit for the new index.
+  ; bc is still the new loop counter.
+  ld hl, sp+8       ; point at loop limit
+  sub a, [hl]       ; subtract limit from index
+  ld c, a
+  inc hl
+  ld a, b
+  sbc a, [hl]
+  ld b, a
+  ; Terminate the loop if old diff and new diff have different signs.
+  pop de            ; get old diff in de
+  ld a, b
+  xor d             ; d xor b
+  bit 7, a          ; 0 = same sign
+  jr z, .continue   ; if same sign, continue
+  ; Loop has crossed limit so it is done.
+.done
   pop bc
   pop hl
   pop de            ; save return address

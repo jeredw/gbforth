@@ -183,6 +183,10 @@ There are also backwards branching while loops. There's `BEGIN ... AGAIN`,
 break out of `DO ... LOOP` but you'd better not try it in a `BEGIN` loop.
 Ditto `UNLOOP`, which I guess exists because `LEAVE` is too slow?
 
+Also, to add insult to injury, there is `DO ... N +LOOP` which  _includes_ its
+endpoint but only when counting down. PS `DO` loops can only work inside
+compiled words, and probably just crash if you try to interpret them.
+
 ### Strings
 
 There are two string conventions, an older one where string addresses point to a
