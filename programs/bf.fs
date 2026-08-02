@@ -39,3 +39,6 @@
   :
   bl parse slurp-file
   compile-bf-string ;
+
+\ :bf printA " ++++++[>+++++++++++<-]>-."
+\ see printA

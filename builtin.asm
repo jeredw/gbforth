@@ -2115,6 +2115,8 @@ def VALUE_OFFSET   equ $5
   PUSH16 _EQUALS
   call _COMPILE_COMMA
   call _0BRANCH     ; branch over this case if it does not match
+  PUSH16 _DROP      ; drop comparison value if matched
+  call _COMPILE_COMMA
   NEXT
 
 ; ENDOF fixes up the target for the last OF and adds a branch out.
@@ -2146,8 +2148,6 @@ PatchTargets:
   ld e, a
   ld a, [Here+1]
   ld d, a
-  PUSH16 _DROP      ; append code to DROP the CASE value
-  call _COMPILE_COMMA
   jp PatchTargets   ; tail call patch ENDOF targets and pop sentinel
 
 ; BEGIN just pushes the current output position.
