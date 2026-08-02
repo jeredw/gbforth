@@ -2144,6 +2144,10 @@ PatchTargets:
 
 ; ENDCASE patches all the out branches leftover from ENDOF.
   DEFCODE "ENDCASE", _ENDCASE, FLAG_IMMEDIATE
+  ; Fallthrough case where nothing matches
+  PUSH16 _DROP      ; drop comparison value if not matched
+  call _COMPILE_COMMA
+  ; After case statement
   ld a, [Here]      ; de = endcase offset
   ld e, a
   ld a, [Here+1]
