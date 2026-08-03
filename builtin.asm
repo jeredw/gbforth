@@ -1803,6 +1803,28 @@ def VALUE_OFFSET   equ $5
   pop hl
   NEXT
 
+; Prints a space.
+  DEFCODE "SPACE", _SPACE, 0
+  push hl
+  ld a, SC
+  call PutChar
+  pop hl
+  NEXT
+
+; Prints n spaces. ( n -- )
+  DEFCODE "SPACES", _SPACES, 0
+  bit 7, b          ; check sign of n
+  jr nz, .out       ; if n < 0 print nothing
+.spaces
+  ld a, b           ; test if n is 0
+  or a, c
+  jr z, .out        ; if n=0 then done
+  call _SPACE
+  jr .spaces
+.out
+  DROP              ; pop count
+  NEXT
+
 ; Prints a character. ( x -- )
   DEFCODE "EMIT", _EMIT, 0
   push hl
@@ -1828,6 +1850,104 @@ def VALUE_OFFSET   equ $5
   jr nz, .print_next ; while more chars keep printing
   pop hl
   DROP              ; pop address
+  NEXT
+
+; Reset "pictured numeric output conversion".
+  DEFCODE "<#", _LESS_NUMBER_SIGN, 0
+  ld a, LOW(FormatBuf + FORMAT_BUF_LEN)
+  ld [PicPtr], a
+  ld a, HIGH(FormatBuf + FORMAT_BUF_LEN)
+  ld [PicPtr+1], a
+  xor a
+  ld [PicLen], a
+  NEXT
+
+; Returns a character string for current numeric conversion. ( ud -- c-addr u )
+  DEFCODE "#>", _NUMBER_SIGN_GREATER, 0
+  DROP              ; drop double number
+  DROP
+  ld a, [PicPtr]    ; push start address
+  ld c, a
+  ld a, [PicPtr+1]
+  ld b, a
+  DUP
+  ld b, 0           ; push length
+  ld a, [PicLen]
+  ld c, a
+  NEXT
+
+; Formats the next digit of a number. ( ud -- ud )
+  DEFCODE "#", _NUMBER_SIGN, 0
+  ld a, [hld]       ; set de = low-order word
+  ld e, a
+  ld a, [hl]
+  ld d, a
+  push hl           ; save stack pointer
+  ld hl, Base       ; point at base
+  call UnsignedDiv32By8 ; set bc:de = ud / base, a = n % base
+  pop hl            ; restore stack pointer
+  push af           ; save mod
+  ld a, d
+  ld [hli], a       ; update low-order word on stack
+  ld a, e
+  ld [hl], a
+  pop af            ; restore mod
+  push hl           ; save stack pointer
+  ld h, HIGH(Digits)
+  ld l, a
+  ld a, [hl]        ; convert digit to ascii
+  ld e, a
+  pop hl            ; restore stack pointer
+  DUP
+  ld b, 0           ; put digit into buffer
+  ld c, e
+  jp _HOLD
+
+; Formats remaining digits of a number. ( ud -- ud )
+  DEFCODE "#S", _NUMBER_SIGN_S, 0
+.next_digit
+  call _NUMBER_SIGN
+  ; Check if number is all zero now
+  xor a
+  push hl
+  or a, [hl]
+  dec hl
+  or a, [hl]
+  pop hl
+  or a, b
+  or a, c
+  jr nz, .next_digit  ; if digits remain keep printing
+  NEXT
+
+; Puts a character into the current number format buffer. ( char -- )
+  DEFCODE "HOLD", _HOLD, 0
+  push hl           ; save stack pointer
+  ld a, [PicPtr]    ; hl = [PicPtr]
+  ld l, a
+  ld a, [PicPtr+1]
+  ld h, a
+  dec hl            ; dec to get to next position
+  ld a, c
+  ld [hl], a        ; store character at [PicPtr]
+  ld a, l           ; update PicPtr
+  ld [PicPtr], a
+  ld a, h
+  ld [PicPtr+1], a
+  ld hl, PicLen     ; count output character
+  inc [hl]
+  pop hl            ; restore stack pointer
+  DROP              ; pop character
+  NEXT
+
+; Optionally prints a sign character. ( n -- )
+  DEFCODE "SIGN", _SIGN, 0
+  bit 7, b
+  jr z, .out        ; if positive, then jump out
+  ld b, 0           ; else hold a - character
+  ld c, "-"
+  jp _HOLD
+.out
+  DROP              ; pop number
   NEXT
 
 ; Reads a key from the on screen keyboard. ( -- char )

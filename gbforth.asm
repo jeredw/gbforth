@@ -50,6 +50,10 @@ Key: db             ; Input key from virtual keyboard
 EXPORT Key
 WordFlags: db       ; Header of the current dictionary entry
 EXPORT WordFlags
+PicPtr: dw          ; Index for pictured numeric output
+EXPORT PicPtr
+PicLen: db
+EXPORT PicLen
 
 ; Note: wordlen must immediately precede FormatBuf so that it can be treated as
 ; a length-prefixed byte string.
@@ -57,9 +61,11 @@ WordLen:   db       ; Length of the most recent scanned word
 EXPORT WordLen
 ; Last character is a sentinel
 def FORMAT_BUF_LEN      equ 32
-EXPORT END_SENTINEL
+EXPORT FORMAT_BUF_LEN
 def END_SENTINEL        equ $ff
+EXPORT END_SENTINEL
 FormatBuf: ds FORMAT_BUF_LEN + 1
+EXPORT FormatBuf
 
 ; Space reserved for parameter stack
 def STACK_SENTINEL equ $bad5
@@ -89,6 +95,7 @@ def UP equ 24
 def DN equ 25
 def RT equ 26
 def LT equ 27
+export SC
 def SC equ 32
 
 def EDITOR_PALETTE   equ %11100100
@@ -122,6 +129,7 @@ def PickerX equ OamShadow + 1
 
 SECTION "Digit table", ROM0, ALIGN[16]
 Digits: db "0123456789ABCDEF"
+EXPORT Digits
 
 SECTION "OAM copy routine", ROM0
 ; DMA transfer (ROM copy, must be called in HRAM instead).
@@ -669,6 +677,31 @@ EXPORT Mul16By16
   jr nz, .loop
   ld b, h
   ld c, l
+  ret
+
+; Divides BC:DE by the 8-bit value in [HL].
+; Returns quotient in BC:DE, remainder in A.
+UnsignedDiv32By8:
+EXPORT UnsignedDiv32By8
+  ld a, 32
+  ld [Temp], a
+  xor a
+.div
+  sla e
+  rl d
+  rl c
+  rl b
+  rl a
+  cp a, [hl]
+  jr c, .no_sub
+  sbc [hl]
+  inc e
+.no_sub
+  push hl
+  ld hl, Temp
+  dec [hl]
+  pop hl
+  jr nz, .div
   ret
 
 ; Divides BC by the 8-bit value in D.
