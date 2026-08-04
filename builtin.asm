@@ -1783,6 +1783,27 @@ def VALUE_OFFSET   equ $5
   DROP              ; pop number
   NEXT
 
+; Prints a number, right justified. ( n1 n2 -- )
+; n1 is number, n2 is width.
+  DEFCODE ".R", _DOT_R, 0
+  ; Reference implementation from
+  ; https://forth-standard.org/standard/core/DotR
+  call _SWAP        ; ( n2 n1 )
+  call _DUP         ; ( n2 n1 n1 )
+  call _ABS         ; ( n2 n1 |n1| )
+  PUSH16 0          ; ( n2 n1 |n1| 0 )
+  call _LESS_NUMBER_SIGN  ; start formatting
+  call _NUMBER_SIGN_S  ; ( n2 n1 0 0 )
+  call _ROT         ; ( n2 0 0 n1 )
+  call _SIGN        ; ( n2 0 0 )
+  call _NUMBER_SIGN_GREATER  ; ( n2 c-addr u )
+  call _ROT         ; ( c-addr u n2 )
+  call _OVER        ; ( c-addr u n2 u )
+  call _MINUS       ; ( c-addr u diff )
+  call _SPACES      ; print diff spaces
+  call _TYPE        ; print the number
+  NEXT
+
 ; Prints an unsigned number. ( u -- )
   DEFCODE "U.", _U_DOT, 0
   push hl
@@ -1793,6 +1814,22 @@ def VALUE_OFFSET   equ $5
   pop bc
   pop hl
   DROP              ; pop number
+  NEXT
+
+; Prints an unsigned number, right justified. ( u n -- )
+; u is number, n is width.
+  DEFCODE "U.R", _U_DOT_R, 0
+  ; Just adapted from .R
+  call _SWAP        ; ( n u )
+  PUSH16 0          ; ( n u 0 )
+  call _LESS_NUMBER_SIGN  ; start formatting
+  call _NUMBER_SIGN_S  ; ( n u 0 )
+  call _NUMBER_SIGN_GREATER  ; ( n c-addr u )
+  call _ROT         ; ( c-addr u n )
+  call _OVER        ; ( c-addr u n u )
+  call _MINUS       ; ( c-addr u diff )
+  call _SPACES      ; print diff spaces
+  call _TYPE        ; print the number
   NEXT
 
 ; Moves down to the next line.
@@ -1820,6 +1857,7 @@ def VALUE_OFFSET   equ $5
   or a, c
   jr z, .out        ; if n=0 then done
   call _SPACE
+  dec bc
   jr .spaces
 .out
   DROP              ; pop count
@@ -1865,13 +1903,13 @@ def VALUE_OFFSET   equ $5
 ; Returns a character string for current numeric conversion. ( ud -- c-addr u )
   DEFCODE "#>", _NUMBER_SIGN_GREATER, 0
   DROP              ; drop double number
-  DROP
+  ; clobber low-order cell of double
   ld a, [PicPtr]    ; push start address
   ld c, a
   ld a, [PicPtr+1]
   ld b, a
-  DUP
-  ld b, 0           ; push length
+  DUP               ; push length
+  ld b, 0
   ld a, [PicLen]
   ld c, a
   NEXT
