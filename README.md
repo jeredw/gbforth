@@ -187,6 +187,20 @@ Also, to add insult to injury, there is `DO ... N +LOOP` which  _includes_ its
 endpoint but only when counting down. PS `DO` loops can only work inside
 compiled words, and probably just crash if you try to interpret them.
 
+PPS: Also also, it is idiomatic to ignore the pretend block structure of control
+flow words and use _non-nesting_ control flow in programs when it suits to
+generate the desired branches, like this gem:
+
+```forth
+BEGIN ... WHILE ( branch out if not found )
+          WHILE ( branch out if found )
+          REPEAT ( loop branch )
+ELSE ( not found )
+THEN ( found )
+```
+
+`WHILE ... ELSE ... THEN`. Great.
+
 ### Strings
 
 There are two string conventions, an older one where string addresses point to a

@@ -1544,7 +1544,7 @@ def DOES_OFFSET    equ $7
   ; By default YYYY is the following instruction, i.e. the jp just
   ; falls through to exit.
   call _HERE        ; push here pointer
-  inc bc            ; skip over jp itself to get to ret
+  inc bc            ; set target to ret following jp
   inc bc
   inc bc
   ld d, $c3         ; jp opcode
@@ -1559,11 +1559,10 @@ def DOES_OFFSET    equ $7
   ld e, c
   inc de            ; point at the jp target
   DROP              ; pop to get bc = xt2
-  ld a, [bc]        ; copy xt2 to action address
+  ld a, c           ; copy xt2 to action address
   ld [de], a
-  inc bc
   inc de
-  ld a, [bc]
+  ld a, b
   ld [de], a
   DROP
   NEXT
@@ -1717,6 +1716,22 @@ def VALUE_OFFSET   equ $5
   DEFCODE "CELL+", _CELL_PLUS, 0
   inc bc            ; 1 cell = 2 bytes.
   inc bc
+  NEXT
+
+; Decrements address by one cell. ( addr1 -- addr2 )
+  DEFCODE "CELL-", _CELL_MINUS, 0
+  dec bc
+  dec bc
+  NEXT
+
+; Pushes the size of one cell. ( -- n )
+  DEFCODE "CELL", _CELL, 0
+  PUSH16 2
+  NEXT
+
+; Pushes the size of -1 cell. ( -- n )
+  DEFCODE "-CELL", _MINUS_CELL, 0
+  PUSH16 $fffe  ; -2
   NEXT
 
 ; Counts how many chars are in n1 cells. ( n1 -- n2 )
@@ -2177,7 +2192,8 @@ def VALUE_OFFSET   equ $5
   call _COMPILE_COMMA ; generate a call
   NEXT
 
-; Appends a test and branch-if-zero sequence and pushes target address.
+; Appends a test and branch-if-zero sequence with an undefined target and pushes
+; the address of the target to be patched later. ( -- orig )
   DEFCODE "0BRANCH", _0BRANCH, FLAG_IMMEDIATE
   DUP               ; result
   push hl           ; save stack pointer
@@ -2208,7 +2224,8 @@ def VALUE_OFFSET   equ $5
   pop hl            ; restore stack pointer
   NEXT
 
-; Appends an unconditional branch and pushes target offset.
+; Appends an unconditional branch with an undefined target and pushes the
+; address of the target to be patched later. ( -- orig )
   DEFCODE "BRANCH", _BRANCH, FLAG_IMMEDIATE
   DUP               ; result
   push hl           ; save stack pointer
@@ -2229,12 +2246,15 @@ def VALUE_OFFSET   equ $5
   pop hl            ; restore stack pointer
   NEXT
 
-; Appends code to branch if top of stack is false.
-  DEFCODE "IF", _IF, FLAG_IMMEDIATE
-  call _0BRANCH     ; append test and branch-if-zero
-  NEXT
+; Some forths use "AHEAD" for unconditional branch. ( -- orig )
+  DEFCODE "AHEAD", _AHEAD, FLAG_IMMEDIATE
+  jp _BRANCH
 
-; Patches the branch target for an IF at top of stack.
+; Appends code to branch if top of stack is false. ( -- orig )
+  DEFCODE "IF", _IF, FLAG_IMMEDIATE
+  jp _0BRANCH       ; append test and branch-if-zero
+
+; Patches the branch target for an IF at top of stack. ( orig -- )
   DEFCODE "THEN", _THEN, FLAG_IMMEDIATE
   ld a, [Here]      ; patch low byte of target
   ld [bc], a
@@ -2244,21 +2264,20 @@ def VALUE_OFFSET   equ $5
   DROP              ; pop target offset
   NEXT
 
-; Patches the branch target for an IF with a false branch.
+; Patches the branch target for an IF with a false branch. ( orig1 -- orig2 )
   DEFCODE "ELSE", _ELSE, FLAG_IMMEDIATE
   call _BRANCH      ; append a branch over the else body
   call _SWAP        ; get IF false target at top of stack
-  call _THEN        ; patch up the IF false branch to go to else
-  NEXT
+  jp   _THEN        ; patch up the IF false branch to go to else
 
-; CASE compiles a sequence of IF statements.
+; CASE compiles a sequence of IF statements. ( -- 0 )
   DEFCODE "CASE", _CASE, FLAG_IMMEDIATE
   ; Push a compile time stack sentinel so ENDCASE can detect when it is done
   ; patching branch targets.
   PUSH16 0
   NEXT
 
-; OF tests whether a case matches and branches over it if not.
+; OF tests whether a case matches and branches over it if not. ( -- orig )
   DEFCODE "OF", _OF, FLAG_IMMEDIATE
   PUSH16 _OVER      ; test if case matches with OVER =
   call _COMPILE_COMMA
@@ -2269,10 +2288,9 @@ def VALUE_OFFSET   equ $5
   call _COMPILE_COMMA
   NEXT
 
-; ENDOF fixes up the target for the last OF and adds a branch out.
+; ENDOF fixes up the target for the last OF and adds a branch out. ( orig1 -- orig2 )
   DEFCODE "ENDOF", _ENDOF, FLAG_IMMEDIATE
-  call _ELSE
-  NEXT
+  jp _ELSE
 
 ; Helper to patch targets left on the stack to point to here.
 PatchTargets:
@@ -2292,7 +2310,7 @@ PatchTargets:
   DROP              ; drop sentinel
   NEXT
 
-; ENDCASE patches all the out branches leftover from ENDOF.
+; ENDCASE patches all the out branches leftover from ENDOF. ( 0 orig...origN -- )
   DEFCODE "ENDCASE", _ENDCASE, FLAG_IMMEDIATE
   ; Fallthrough case where nothing matches
   PUSH16 _DROP      ; drop comparison value if not matched
@@ -2304,37 +2322,32 @@ PatchTargets:
   ld d, a
   jp PatchTargets   ; tail call patch ENDOF targets and pop sentinel
 
-; BEGIN just pushes the current output position.
+; BEGIN just pushes the current output position. ( -- dest )
   DEFCODE "BEGIN", _BEGIN, FLAG_IMMEDIATE
-  call _HERE
-  NEXT
+  jp _HERE
 
-; AGAIN branches back to BEGIN.
+; AGAIN branches back to BEGIN. ( dest -- )
   DEFCODE "AGAIN", _AGAIN, FLAG_IMMEDIATE
-  call _BRANCH      ; stack will be ( ... -- begin-addr again-target )
-  call _STORE       ; stores begin-addr to again-target
-  NEXT
+  call _BRANCH      ; stack will be ( ... -- dest orig )
+  jp   _STORE       ; stores dest to orig
 
-; UNTIL conditionally branches back to BEGIN.
+; UNTIL conditionally branches back to BEGIN. ( dest -- )
   DEFCODE "UNTIL", _UNTIL, FLAG_IMMEDIATE
-  call _0BRANCH     ; stack will be ( ... -- begin-addr until-target )
-  call _STORE       ; stores begin-addr to until-target
-  NEXT
+  call _0BRANCH     ; stack will be ( ... -- dest orig )
+  jp   _STORE       ; stores dest to orig
 
-; WHILE branches over the loop body if a condition is false.
+; WHILE branches over the loop body if a condition is false. ( dest -- orig dest )
   DEFCODE "WHILE", _WHILE, FLAG_IMMEDIATE
-  call _0BRANCH     ; stack will be ( ... -- begin-addr while-target )
-  NEXT
+  call _0BRANCH     ; stack will be ( ... -- dest orig )
+  jp   _SWAP        ; leave dest at top of stack
 
-; REPEAT branches back to BEGIN, and patches the WHILE jump to jump over the loop.
+; REPEAT branches back to BEGIN, and patches WHILE to branch out. ( orig dest -- )
   DEFCODE "REPEAT", _REPEAT, FLAG_IMMEDIATE
-  call _SWAP        ; ( begin-addr while-target -- while-target begin-addr )
-  call _BRANCH      ; ( ... -- while-target begin-addr repeat-target )
-  call _STORE       ; stores begin-addr to repeat-target
-  call _HERE        ; ( ... -- while-target HERE )
+  call _BRANCH      ; ( ... -- orig1 dest orig2 )
+  call _STORE       ; branch back to BEGIN dest ( ... -- orig1 )
+  call _HERE        ; ( ... -- orig1 HERE )
   call _SWAP
-  call _STORE       ; stores HERE to while-target 
-  NEXT
+  jp   _STORE       ; stores HERE to orig1
 
 ; Compiles the setup code for an indexed do ... loop.
   DEFCODE "DO", _DO, FLAG_IMMEDIATE
