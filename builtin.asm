@@ -120,14 +120,12 @@ ENDM
 ; Copies top below second ( x1 x2 -- x2 x1 x2 )
   DEFCODE "TUCK", _TUCK, 0
   call _SWAP
-  call _OVER
-  NEXT
+  jp   _OVER
 
 ; Drops the second item ( x1 x2 -- x2 )
   DEFCODE "NIP", _NIP, 0
   call _SWAP
-  call _DROP
-  NEXT
+  jp   _DROP
 
 ; Rotates top three elements on stack ( n1 n2 n3 -- n2 n3 n1 )
   DEFCODE "ROT", _ROT, 0
@@ -354,9 +352,6 @@ ENDM
   cp a, e           ; compare low bytes
   jr c, .n1_gt_n2   ; if e > c, then n1 > n2
 .n1_le_n2
-  ld a, b           ; bc = n2 is already the max
-  xor $80           ; flip sign back
-  ld b, a
   NEXT
 .n1_gt_n2
   ld c, e           ; set bc from de (low byte)
@@ -387,9 +382,6 @@ ENDM
   ld b, a
   NEXT
 .n1_gt_n2
-  ld a, b           ; bc = n2 is already the min
-  xor $80           ; flip sign back
-  ld b, a
   NEXT
 
 ; Adds elements on stack ( n1 n2 -- sum )
