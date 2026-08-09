@@ -780,12 +780,13 @@ Negate:
 EXPORT PutChar
 PutChar:
   push af
+.wait_for_room
   ld a, [PrintQueueLength]
   cp a, PRINT_QUEUE_SIZE    ; max length?
-  jr nz, .has_space         ; if not, queue new char
+  jr nz, .has_room          ; if not, queue new char
   halt              ; wait for vblank to make room
-  jr PutChar
-.has_space
+  jr .wait_for_room
+.has_room
   ld h, HIGH(PrintQueue)
   ld a, [PrintQueueTail]
   ld l, a                   ; hl = tail
