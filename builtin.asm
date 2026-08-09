@@ -1639,33 +1639,28 @@ def DOES_OFFSET    equ $7
 ; Creates a new entry that loads a modifiable literal value. ( x "<spaces>name" -- )
   DEFCODE "VALUE", _VALUE, 0
   ; Values are just constants that we intrusively modify.
-  call _CONSTANT
-  NEXT
+  jp _CONSTANT
 
 ; How far into a VALUE word is the actual value for TO.
 ; It is after a literal field: call DUP / ld bc, XXXX
-def VALUE_OFFSET   equ $5
+def VALUE_OFFSET   equ $4
 
 ; Modifies the value stored in a VALUE entry.
-  DEFCODE "TO", _TO_, 0
+  DEFCODE "TO", _TO, 0
   ld a, [State]
   or a, a           ; test state
   jr nz, .compiling
-  call _TO_RUNTIME
-  NEXT
+  jp _TO_RUNTIME
 .compiling
   PUSH16 _TO_RUNTIME
-  call _COMPILE_COMMA
-  NEXT
+  jp _COMPILE_COMMA
 
 ; Does the runtime part of a TO 
   DEFCODE "(TO)", _TO_RUNTIME, 0
   call _TICK        ; look up entry  
-  call _TO_BODY     ; skip ahead to the body
   PUSH16 VALUE_OFFSET
   call _PLUS        ; skip into literal
-  call _STORE       ; store x to literal
-  NEXT
+  jp   _STORE       ; store x to literal
 
 ; Checkpoints dictionary and memory state. ( "<spaces>name" -- )
   DEFCODE "MARKER", _MARKER, 0
