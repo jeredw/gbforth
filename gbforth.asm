@@ -28,6 +28,7 @@ PageBasePtr: dw
 PagePtr: dw
 Editing: db
 SavedPagePtr: dw    ; editor position before running program
+LastWordScanPtr: dw  ; start of last word text
 
 ; A ram trampoline to jump via an indirect pointer.
 Indirect: ds 3
@@ -332,8 +333,10 @@ Interpreter:
   ld [Editing], a
   ld a, LOW(SaveData)
   ld [ScanPtr], a
+  ld [LastWordScanPtr], a
   ld a, HIGH(SaveData)
   ld [ScanPtr+1], a
+  ld [LastWordScanPtr+1], a
   ei
   ; Reset the compiler state each time we run...
   call ResetProgramState
@@ -367,6 +370,10 @@ Done:
 ; Flag an error condition. Unwind the stack and bail.
 EXPORT Error
 Error:
+  ld a, [LastWordScanPtr]
+  ld [ScanPtr], a
+  ld a, [LastWordScanPtr+1]
+  ld [ScanPtr+1], a
   call MoveCursorToScanPtr
   ; TODO flag error somehow (cursor?)
   jp Editor
@@ -416,6 +423,11 @@ MoveCursorToScanPtr:
   rl c
   rl a
   ld [CursorY], a
+  ; Clear print queue so pending output doesn't clobber the program.
+  xor a
+  ld [PrintQueueLength], a
+  ld [PrintQueueHead], a
+  ld [PrintQueueTail], a
   ; Call editor routine to update screen state for the selected position.
   call DoMoveCursor
   ; Turn on output again
@@ -556,9 +568,17 @@ ScanWord:
 .skip_leading_delims
   ld a, [hl]
   cp a, c
-  jr nz, .store_char  ; if not delim, done skipping
+  jr nz, .start     ; if not delim, done skipping
   inc hl            ; consume delim
   jr .skip_leading_delims
+.start
+  push af
+  ld a, l           ; save start of word for error reporting
+  ld [LastWordScanPtr], a
+  ld a, h
+  ld [LastWordScanPtr+1], a
+  pop af
+  jr .store_char
 .in_word
   ld a, [hl]
   cp a, c
