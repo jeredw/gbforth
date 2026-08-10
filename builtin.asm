@@ -1567,7 +1567,7 @@ def DOES_OFFSET    equ $7
   inc bc
   ld a, [bc]        ; copy high byte of xt2 to b
   ld b, a
-  ld c, d
+  ld c, e
   NEXT
 
 ; IS sets a name to execute xt. ( xt "<spaces>name" -- )
