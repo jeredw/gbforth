@@ -164,10 +164,10 @@ ENDM
   sla c             ; move hl back 2*u entries
   rl b
   ld a, l
-  add a, c
+  sub a, c
   ld l, a
   ld a, h
-  adc a, b
+  sbc a, b
   ld h, a
   ; now hl points to the left member of the first pair to swap
   ; swap each entry with its right neighbor
