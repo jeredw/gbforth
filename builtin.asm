@@ -148,8 +148,7 @@ ENDM
   inc hl            ; point hl back at second
   inc hl
   ; Swap top with second.
-  call _SWAP        ; ( n3 n2 n1 -- n3 n1 n2 )
-  NEXT
+  jp  _SWAP         ; ( n3 n2 n1 -- n3 n1 n2 )
 
 ; Rotates u+1 items on the stack ( xu xu-1 ... x0 u -- xu-1 ... x0 xu )
   DEFCODE "ROLL", ROLL, 0
@@ -1775,6 +1774,55 @@ def VALUE_OFFSET   equ $4
 
 ; Prints a signed number. ( n -- )
   DEFCODE ".", _DOT, 0
+  call PrintNumber
+  DROP              ; pop number
+  NEXT
+
+; Debug: prints the stack.
+  DEFCODE ".S", _DOT_S, 0
+  PUSH16 "<"
+  call _EMIT
+  call _DEPTH
+  push bc           ; save depth
+  PUSH16 0
+  call _U_DOT_R
+  PUSH16 ">"
+  call _EMIT
+  call _SPACE
+  pop de            ; restore depth
+  ld a, d
+  or a, e
+  jr z, .done       ; if no entries on stack, done
+  ; Print entries except for the top.
+  dec de            ; top is printed separately
+  ; If the stack has at least one entry, the first entry is a sentinel
+  ; pushed when we dup the initial bc onto it.
+  ld hl, ParameterStack+1
+  push bc           ; save top of stack
+.print_entry
+  ld a, d
+  or a, e
+  jr z, .print_top  ; test if done printing
+  ; Get next entry from stack.
+  inc hl
+  ld a, [hl]
+  ld b, a
+  inc hl
+  ld a, [hl]
+  ld c, a
+  push de
+  call PrintNumber  ; print it
+  pop de
+  dec de            ; count printed
+  jr .print_entry
+.print_top
+  pop bc
+  call PrintNumber
+.done
+  NEXT
+
+; Prints a signed number and a space
+PrintNumber:
   push hl
   push bc
   call PutSignedNumber
@@ -1782,8 +1830,7 @@ def VALUE_OFFSET   equ $4
   call PutChar
   pop bc
   pop hl
-  DROP              ; pop number
-  NEXT
+  ret
 
 ; Prints a number, right justified. ( n1 n2 -- )
 ; n1 is number, n2 is width.
