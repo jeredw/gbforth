@@ -2342,8 +2342,9 @@ PatchTargets:
   call _COMPILE_COMMA
   PUSH16 0          ; dummy to match ?DO stack
   call _HERE        ; push target address for LOOP
-  PUSH16 0          ; push sentinel to indicate end of LEAVE chain
-  NEXT
+  ; Keep a list of LEAVE branches to patch on the return stack.
+  PUSH16 0          ; sentinel to end leave list
+  jp _TO_R
 
 ; Compiles the setup code for an indexed ?do ... loop.
   DEFCODE "?DO", _QUESTION_DO, FLAG_IMMEDIATE
@@ -2351,8 +2352,9 @@ PatchTargets:
   call _COMPILE_COMMA
   call _0BRANCH     ; jump out of loop if check fails
   call _HERE        ; push target address for LOOP
-  PUSH16 0          ; push sentinel to indicate end of LEAVE chain
-  NEXT
+  ; Keep a list of LEAVE branches to patch on the return stack.
+  PUSH16 0          ; sentinel to end leave list
+  jp _TO_R
 
 ; Compiles the backwards branch for an indexed do ... loop.
   DEFCODE "LOOP", _LOOP, FLAG_IMMEDIATE
@@ -2368,6 +2370,17 @@ PatchTargets:
 
 ; Compiles backwards loop branches for loop and +loop.
 EndLoop:
+  ; Push a list of LEAVE targets from control flow stack terminated by 0.
+  PUSH16 0
+  pop de            ; save ret address
+.collect_targets
+  DUP               ; pop leave target address
+  pop bc
+  ld a, b           ; test if zero
+  or a, c
+  jr nz, .collect_targets
+  push de           ; restore ret address
+  DROP              ; drop sentinel
   ld a, [Here]      ; de = beyond loop
   add a, 8          ; past 0branch (ld/or/call/jp z)
   ld e, a
@@ -2395,7 +2408,7 @@ EndLoop:
   call _COMPILE_COMMA
   ; This branch target will be patched by LOOP.
   call _BRANCH      ; branch out of loop
-  NEXT
+  jp _TO_R
 
 ; Runtime setup for DO. ( limit start -- )
   DEFCODE "(DO)", _DO_RUNTIME, 0
@@ -2565,7 +2578,10 @@ EndLoop:
 
 ; Removes the current loop counter and limit from the return stack.
   DEFCODE "UNLOOP", _UNLOOP, 0
-  POP2R             ; pop return stack twice
+  pop de            ; save ret address
+  pop af
+  pop af
+  push de           ; restore ret address
   NEXT
 
 ; Turns address and length into range for a DO loop ( addr u -- addr+u addr )
