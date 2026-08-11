@@ -203,12 +203,11 @@ ENDM
   DEFCODE "PICK", PICK, 0
   ld a, b
   or a, c
-  jp z, _DUP        ; if index is 0 then dup
-  dec bc            ; otherwise compute 2*(index-1)
-  sla c
+  jp z, .pick_top   ; if index is 0 then drop and dup
+  sla c             ; otherwise compute 2*index
   rl b
   push hl           ; save stack pointer
-  ld a, l           ; subtract 2*(index-1) from hl
+  ld a, l           ; subtract 2*index from hl
   sub a, c
   ld l, a
   ld a, h
@@ -217,6 +216,9 @@ ENDM
   DROP              ; read bc and clobber index
   pop hl
   NEXT
+.pick_top
+  DROP
+  jp _DUP
 
 ; Drops 2 elements from top of stack ( n1 n2 -- ).
   DEFCODE "2DROP", _2DROP, 0
