@@ -302,6 +302,14 @@ Editor:
   ld a, [NewButtons]; DULRSEBA
   and a, $8         ; if start is pressed, enter interpreter
   jr z, Editor
+  ; Wait for START to be released so we do not immediately return.
+.wait_for_release
+  halt
+  nop
+  ld a, [NewButtons]; DULRSEBA
+  and a, $8         ; if start is released, enter interpreter
+  jr nz, .wait_for_release
+
   ; fall through to interpreter
 
 Interpreter:
