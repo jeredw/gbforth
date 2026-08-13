@@ -230,8 +230,7 @@ ENDM
 ; Dups 2 elements at top of stack ( n1 n2 -- n1 n2 n1 n2 ).
   DEFCODE "2DUP", _2DUP, 0
   call _OVER
-  call _OVER
-  NEXT
+  jp   _OVER
 
 ; Fetches 2 elements ( a-addr -- x1 x2 ).
   DEFCODE "2@", _2FETCH, 0
@@ -239,8 +238,7 @@ ENDM
   call _CELL_PLUS
   call _FETCH       ; fetch most significant word
   call _SWAP
-  call _FETCH       ; fetch least significant word
-  NEXT
+  jp   _FETCH       ; fetch least significant word
 
 ; Stores 2 elements ( x1 x2 a-addr -- ).
   DEFCODE "2!", _2STORE, 0
@@ -248,8 +246,7 @@ ENDM
   call _OVER        ; ( -- x1 a-addr x2 a-addr )
   call _STORE       ; store least-significant word
   call _CELL_PLUS
-  call _STORE       ; store most sigificant word
-  NEXT
+  jp   _STORE       ; store most sigificant word
 
 ; Swaps 2 elements at top of stack ( n1 n2 n3 n4 -- n3 n4 n1 n2 ).
   DEFCODE "2SWAP", _2SWAP, 0
@@ -334,7 +331,7 @@ ENDM
 ; Shift left logical by one bit. ( x1 -- x2 )
   DEFCODE "2*", _2STAR, 0
   sla c
-  rl c
+  rl b
   NEXT
 
 ; Max of two signed numbers ( n1 n2 -- n3 )
@@ -651,7 +648,7 @@ ENDM
   ld bc, TRUE       ; yes, <
   NEXT
 
-; Tests if a number is within a range ( test low high -- flag )
+; Tests if a number is within a range, i.e. low <= test < high ( test low high -- flag )
   DEFCODE "WITHIN", _WITHIN, 0
   ; Magic reference implementation from forth-standard.org
   ; : WITHIN ( test low high -- flag ) OVER - >R - R> U< ;
@@ -660,8 +657,7 @@ ENDM
   call _TO_R
   call _MINUS
   call _R_FROM
-  call _U_LESS_THAN
-  NEXT
+  jp   _U_LESS_THAN
 
 ; Logical ORs second with top ( x1 x2 -- x3 )
   DEFCODE "OR", _OR, 0
@@ -750,8 +746,7 @@ ENDM
 ; ( -- x1 x2 ) ( R: x1 x2 -- )
   DEFCODE "2R>", _2_R_FROM, 0
   POP2R
-  call _SWAP
-  NEXT
+  jp _SWAP
 
 ; Copy twice from the return stack to the parameter stack.
 ; ( -- x1 x2 ) ( R: x1 x2 -- x1 x2 )
@@ -761,8 +756,7 @@ ENDM
   call _2DUP        ; ( x2 x1 -- x2 x1 x2 x1 ) ( R: -- )
   PUSH2R            ; ( x2 -- x2 x1 x2 ) ( R: -- x1 )
                     ; ( -- x2 x1 ) ( R: -- x1 x2 )
-  call _SWAP        ; ( -- x1 x2 ) ( R: -- x1 x2 )
-  NEXT
+  jp _SWAP          ; ( -- x1 x2 ) ( R: -- x1 x2 )
 
 ; Scans a word delimited by the character at the top of the stack
 ; and returns a pointer to the length-delimited word.
@@ -892,8 +886,7 @@ ENDM
 ; Only makes sense at compile time.
   DEFCODE "[CHAR]", _BRACKET_CHAR, FLAG_IMMEDIATE
   call _CHAR
-  call _LITERAL
-  NEXT
+  jp   _LITERAL
 
 ; Comments with '\'.
   DEFCODE "\\", _BACKSLASH, FLAG_IMMEDIATE
@@ -947,8 +940,7 @@ ENDM
 ; Scans a string delimited by "" and compiles code to push its address and length.
   DEFCODE "S\"", _S_QUOTE, FLAG_IMMEDIATE
   PUSH16 "\""
-  call _S_DELIM     ; scan forward to " and find 
-  NEXT
+  jp _S_DELIM       ; scan forward to " and find
 
 ; Scans a string delimited by () and compiles code to print it.
   DEFCODE ".(", _DOT_PAREN, FLAG_IMMEDIATE
@@ -957,12 +949,10 @@ ENDM
   ld a, [State]
   or a, a           ; test state
   jr nz, .compiling
-  call _TYPE        ; if interpreting, print immediately
-  NEXT
+  jp _TYPE          ; if interpreting, print immediately
 .compiling
   PUSH16 _TYPE      ; generate code to call TYPE
-  call _COMPILE_COMMA
-  NEXT
+  jp _COMPILE_COMMA
 
 ; Scans a string delimited by " and compiles code to print it.
   DEFCODE ".\"", _DOT_QUOTE, FLAG_IMMEDIATE
@@ -970,12 +960,10 @@ ENDM
   ld a, [State]
   or a, a           ; test state
   jr nz, .compiling
-  call _TYPE        ; if interpreting, print immediately
-  NEXT
+  jp _TYPE          ; if interpreting, print immediately
 .compiling
   PUSH16 _TYPE
-  call _COMPILE_COMMA ; generate code to call TYPE
-  NEXT
+  jp _COMPILE_COMMA ; generate code to call TYPE
 
 ; Scans a counted string and compiles code to push its address.
 ; Since we don't want to corrupt source code, we copy counted strings and
@@ -1032,8 +1020,7 @@ ENDM
   inc bc            ; point bc at length field again
   pop hl            ; restore stack pointer
   ; Now the top of the stack points at the length field.
-  call _LITERAL
-  NEXT
+  jp _LITERAL
 
 ; Finds a word in the dictionary and returns a pointer to it.
 ; ( c-addr -- c-addr 0 | xt 1 | xt -1 )
@@ -1081,8 +1068,7 @@ ENDM
 ; Macro to find and push the address of the next word ( "<spaces>name" -- xt )
   DEFCODE "[']", _BRACKET_TICK, FLAG_IMMEDIATE
   call _TICK        ; look up the word
-  call _LITERAL     ; compile code to push a literal
-  NEXT
+  jp _LITERAL       ; compile code to push a literal
 
 ; Delays compilation of ( "<spaces>name" ).
 ; This is useful for deferring execution when defining macros.
@@ -1099,8 +1085,7 @@ ENDM
   ;   \ When compiling STUFF, we run MAYBE which calls _IF.
   ;   \ Had we written IF instead of POSTPONE IF, we would have
   ;   \ called IF during the definition of MAYBE.
-  call _COMPILE_COMMA ; compile a call to WORD
-  NEXT
+  jp _COMPILE_COMMA   ; compile a call to WORD
 .compiled
   ; POSTPONE <compiled> appends code to compile a call to a word.
   ; For example say we want a macro to add a call to dup.
@@ -1112,8 +1097,7 @@ ENDM
   ;   \ we would have called DUP during the definition of MY-DUP.
   call _LITERAL     ; compile push xt
   PUSH16 _COMPILE_COMMA ; compile call to COMPILE,
-  call _COMPILE_COMMA
-  NEXT
+  jp _COMPILE_COMMA
 
 ; Compiles code to put a literal on the stack ( x -- )
   DEFCODE "LITERAL", _LITERAL, FLAG_IMMEDIATE
@@ -1263,7 +1247,7 @@ ENDM
   bit 0, a          ; check if Here pointer is cell-aligned
   jr z, .out        ; if so, ok
   PUSH16 1          ; otherwise allocate one byte to align it
-  call _ALLOT
+  jp _ALLOT
 .out
   NEXT
 
@@ -1410,11 +1394,9 @@ ENDM
   call _ROT         ; ( u addr1 addr2 -- addr1 addr2 u )
   ; flags should still be ok, unaffected by DROP + ROT
   jr nz, .move_up   ;
-  call _CMOVE       ; source >= dest so copy forwards
-  NEXT
+  jp _CMOVE         ; source >= dest so copy forwards
 .move_up
-  call _CMOVE_UP    ; copy backwards
-  NEXT
+  jp _CMOVE_UP      ; copy backwards
 
 ; Creates a new empty named dictionary definition. ( "<spaces>name" -- )
   DEFCODE "(CREATE-EMPTY)", _CREATE_EMPTY, 0
@@ -1489,8 +1471,7 @@ ENDM
   call AppendCode   ; append "jp <ret>"
   ld bc, $c9        ; clobber top of stack with ret opcode
   call _C_COMMA     ; append "ret" (and pop stack)
-  call _ALIGN       ; actually align for data if needed
-  NEXT
+  jp   _ALIGN       ; actually align for data if needed
 
 ; How far into a CREATE word is the pointer we need to patch up for DOES>.
 def DOES_OFFSET    equ $7
@@ -1514,8 +1495,7 @@ def DOES_OFFSET    equ $7
   ; Return early from the current definition. The remainder of its code
   ; from HERE+1 onwards will be used as the behavior for DOES>.
   PUSH16 $c9        ; ret opcode
-  call _C_COMMA     ; append ret
-  NEXT
+  jp   _C_COMMA     ; append ret
 
 ; Patches the DOES pointer in the LATEST entry. See CREATE and DOES>.
   DEFCODE "(DOES>)", _DOES_RUNTIME, 0
@@ -1524,8 +1504,7 @@ def DOES_OFFSET    equ $7
   call _TO_BODY     ; skip past the header
   PUSH16 DOES_OFFSET
   call _PLUS        ; skip to the offset of the DOES pointer
-  call _STORE       ; store HERE+1 into the DOES pointer
-  NEXT
+  jp   _STORE       ; store HERE+1 into the DOES pointer
 
 ; DEFER defines a new entry that can be aliased to another one.
 ; We don't have dedicated fancy fields for this and just do it with a JP.
@@ -1543,8 +1522,7 @@ def DOES_OFFSET    equ $7
   ld d, $c3         ; jp opcode
   call AppendCode   ; append "jp YYYY"
   ld bc, $c9        ; clobber top of stack with ret opcode
-  call _C_COMMA     ; append "ret" (and pop)
-  NEXT
+  jp _C_COMMA       ; append "ret" (and pop)
 
 ; DEFER! sets the ACTION pointer of xt1 to be xt2 ( xt2 xt1 -- )
   DEFCODE "DEFER!", _DEFER_STORE, 0
@@ -1577,13 +1555,11 @@ def DOES_OFFSET    equ $7
   or a, a           ; test state
   jr nz, .compiling
   call _TICK        ; look up the next word
-  call _DEFER_STORE ; set jp target in defer definition
-  NEXT
+  jp   _DEFER_STORE ; set jp target in defer definition
 .compiling
   call _BRACKET_TICK ; compile code to push xt
   PUSH16 _DEFER_STORE ; compile DEFER!
-  call _COMPILE_COMMA
-  NEXT
+  jp   _COMPILE_COMMA
 
 ; ACTION-OF returns the action of a deferred word. ( "<spaces>name" -- xt )
   DEFCODE "ACTION-OF", _ACTION_OF, FLAG_IMMEDIATE
@@ -1591,21 +1567,18 @@ def DOES_OFFSET    equ $7
   or a, a           ; test state
   jr nz, .compiling
   call _TICK        ; look up the next word
-  call _DEFER_FETCH ; get target in defer definition
-  NEXT
+  jp   _DEFER_FETCH ; get target in defer definition
 .compiling
   call _BRACKET_TICK ; compile code to push xt
   PUSH16 _DEFER_FETCH ; compile DEFER@
-  call _COMPILE_COMMA
-  NEXT
+  jp   _COMPILE_COMMA
 
 ; Creates a new entry that loads a literal value. ( x -- )
   DEFCODE "CONSTANT", _CONSTANT, 0
   call _CREATE_EMPTY ; create a new, empty dictionary entry
   call _LITERAL     ; compile code to push x
   PUSH16 $c9        ; push ret opcode
-  call _C_COMMA     ; append "ret"
-  NEXT
+  jp   _C_COMMA     ; append "ret"
 
 ; Creates a new entry that pushes an address for some aligned data.
   DEFCODE "VARIABLE", _VARIABLE, 0
@@ -1619,8 +1592,7 @@ def DOES_OFFSET    equ $7
   call _C_COMMA     ; append "ret" (+1B)
   call _ALIGN
   PUSH16 2          ; reserve one cell for value
-  call _ALLOT
-  NEXT
+  jp   _ALLOT
 
 ; Creates a new entry that pushes an address for some aligned data.
   DEFCODE "2VARIABLE", _2VARIABLE, 0
@@ -1634,8 +1606,7 @@ def DOES_OFFSET    equ $7
   call _C_COMMA     ; append "ret" (+1B)
   call _ALIGN
   PUSH16 4          ; reserve two cells for value
-  call _ALLOT
-  NEXT
+  jp   _ALLOT
 
 ; Creates a new entry that loads a modifiable literal value. ( x "<spaces>name" -- )
   DEFCODE "VALUE", _VALUE, 0
@@ -1673,8 +1644,7 @@ def VALUE_OFFSET   equ $4
   PUSH16 _MARKER_RUNTIME  ; compile code to call MARKER_RUNTIME
   call _COMPILE_COMMA
   PUSH16 $c9
-  call _C_COMMA     ; append "ret" (and pop)
-  NEXT
+  jp   _C_COMMA     ; append "ret" (and pop)
 
 ; Rolls back dictionary and memory state. ( old-here old-latest -- )
   DEFCODE "(MARKER)", _MARKER_RUNTIME, 0
@@ -1852,8 +1822,7 @@ PrintNumber:
   call _OVER        ; ( c-addr u n2 u )
   call _MINUS       ; ( c-addr u diff )
   call _SPACES      ; print diff spaces
-  call _TYPE        ; print the number
-  NEXT
+  jp   _TYPE        ; print the number
 
 ; Prints an unsigned number. ( u -- )
   DEFCODE "U.", _U_DOT, 0
@@ -1880,8 +1849,7 @@ PrintNumber:
   call _OVER        ; ( c-addr u n u )
   call _MINUS       ; ( c-addr u diff )
   call _SPACES      ; print diff spaces
-  call _TYPE        ; print the number
-  NEXT
+  jp   _TYPE        ; print the number
 
 ; Moves down to the next line.
   DEFCODE "CR", _CR, 0
