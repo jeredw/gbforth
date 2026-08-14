@@ -200,7 +200,7 @@ ENDM
   NEXT
 
 ; Indexes into the stack and copies something ( xu...x1 x0 u -- xu...x1 x0 xu )
-  DEFCODE "PICK", PICK, 0
+  DEFCODE "PICK", _PICK, 0
   ld a, b
   or a, c
   jp z, .pick_top   ; if index is 0 then drop and dup
@@ -256,6 +256,13 @@ ENDM
   call _ROT
   call _R_FROM
   NEXT
+
+; Copies pair to top of stack ( x1 x2 x3 x4 -- x1 x2 x3 x4 x1 x2 ).
+  DEFCODE "2OVER", _2OVER, 0
+  PUSH16 3
+  call _PICK
+  PUSH16 3
+  jp _PICK
 
 ; Duplicates top of stack if not zero.
   DEFCODE "?DUP", _QDUP, 0
