@@ -22,10 +22,10 @@ CurButtons: db
 NewButtons: db
 CursorX: db
 CursorY: db
-CursorPtr: dw
-CurPage: db
-PageBasePtr: dw
-PagePtr: dw
+CursorPtr: dw       ; cursor pointer in video ram
+CurPage: db         ; current page number
+PageBasePtr: dw     ; base address of current page in save ram
+PagePtr: dw         ; where editor stores chars in save ram
 Editing: db
 SavedPagePtr: dw    ; editor position before running program
 LastWordScanPtr: dw  ; start of last word text
@@ -96,6 +96,8 @@ def UP equ 24
 def DN equ 25
 def RT equ 26
 def LT equ 27
+def PGUP equ 30
+def PGDN equ 31
 export SC
 def SC equ 32
 
@@ -839,7 +841,7 @@ DisableLCD:
   ld a, [rLY]
   cp SCREEN_HEIGHT_PX
   jr c, .wait_for_vblank
-  ld a, 0
+  xor a
   ld [rLCDC], a     ; Turn off lcd.
   ret
 
@@ -988,6 +990,10 @@ VBlankInterrupt:
   jr z, .right
   cp a, LT          ; arrow left
   jr z, .left
+  cp a, PGDN
+  jp z, NextPage    ; next code page
+  cp a, PGUP
+  jp z, PrevPage    ; previous code page
   jr .advance
 .newline:
   ld a, SC
@@ -1029,7 +1035,7 @@ VBlankInterrupt:
   pop de
   pop bc
   pop af
-  reti 
+  reti
 
 ; Puts B at current cursor position
 VBlankPutChar:
@@ -1049,6 +1055,43 @@ VBlankPutCharInSaveRam:
   ld a, b
   ld [hl], a
   ret
+
+PrevPage:
+  ld a, [CurPage]
+  or a, a
+  jr z, .set_page
+  dec a
+.set_page
+  ld [CurPage], a
+  jr SetPageFromVBlank
+
+NextPage:
+  ld a, [CurPage]
+  cp a, 7
+  jr z, .set_page
+  inc a
+.set_page
+  ld [CurPage], a
+  jr SetPageFromVBlank
+
+SetPageFromVBlank:
+  push af           ; save page
+  xor a
+  ld [rLCDC], a     ; Turn off lcd.
+  pop af            ; restore page
+  call LoadPageWithLCDDisabled
+  ; Reset cursor position inside new page
+  xor a
+  ld [CursorY], a
+  ld [CursorX], a
+  call DoMoveCursor
+  call EnableLCD    ; reenable lcd
+  ; End the vblank interrupt that triggered page change
+  pop hl
+  pop de
+  pop bc
+  pop af
+  reti 
 
 CursorBack:
   ld a, [CursorX]
@@ -1260,7 +1303,7 @@ OnScreenKeyboard:
   db "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", " ", "!", "\"", "#",  "$", "%",  "&", "'", "(", ")", "            "
   db "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", " ", "*",  "+", ",",  "-", ".",  "/", ":", ";", "<", "            "
   db "A", "S", "D", "F", "G", "H", "J", "K", "L",  24,  13, "=",  ">", "?",  "@", "[", "\\", "]", "^", "_", "            "
-  db "Z", "X", "C", "V", "B", "N", "M",  27,  26,  25, " ", "`", "\{", "|", "\}", "~",  " ", " ", " ", " ", "            "
+  db "Z", "X", "C", "V", "B", "N", "M",  27,  26,  25, " ", "`", "\{", "|", "\}", "~",  " ", " ",  31,  30, "            "
 .End
 
 SECTION "Tile data", ROM0
