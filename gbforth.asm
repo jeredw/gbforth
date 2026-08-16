@@ -136,13 +136,13 @@ EXPORT Digits
 SECTION "OAM copy routine", ROM0
 ; DMA transfer (ROM copy, must be called in HRAM instead).
 RomOamCopy:
-    ld a, HIGH(OamShadow)
-    ldh [rDMA], a   ; start DMA transfer (starts right after instruction)
-    ld a, 40        ; delay for a total of 4×40 = 160 M-cycles
+  ld a, HIGH(OamShadow)
+  ldh [rDMA], a     ; start DMA transfer (starts right after instruction)
+  ld a, 40          ; delay for a total of 4×40 = 160 M-cycles
 .wait:
-    dec a           ; 1 M-cycle
-    jr nz, .wait    ; 3 M-cycles
-    ret
+  dec a             ; 1 M-cycle
+  jr nz, .wait      ; 3 M-cycles
+  ret
 .End
 
 SECTION "HRAM", HRAM
@@ -1024,6 +1024,19 @@ VBlankInterrupt:
 .input_char
   pop af
   ld [Key], a
+  ; Enable scrolling even when editing is disabled because the output
+  ; area is so narrow.
+  ; TODO: Ideally this wouldn't mess up the current print position.
+  ; TODO: Maybe allow a way to disable this if programs want to intercept
+  ; arrow keys.
+  cp a, DN          ; arrow down
+  jr z, .down
+  cp a, UP          ; arrow up
+  jr z, .up
+  cp a, RT          ; arrow right
+  jr z, .right
+  cp a, LT          ; arrow left
+  jp z, .left
 .out
   pop hl
   pop de
