@@ -42,19 +42,19 @@ ENDM
 ; +-----+-----+
 ; |  0  |  1  | 1
 ; +-----+-----+
-; | -2  | -1  | -1 <-- base (sentinel)
+; |     | -1  | -1 <-- base
 ; +-----------+
 ; The stack grows up. We want to pop low-order bytes first for arithmetic, so
 ; elements are stored in big endian byte order.
 ;
 ; Initially the stack is empty, so hl points before the first entry,
-; and bc is undefined.
+; and bc is set to a sentinel value.
 
 ; Macro DROP pops the top of the stack, setting bc to second.
 ; This sequence is reused in several stack primitives.
 ; If there's just one element on the stack, this will leave hl
 ; pointed before the beginning of the stack and bc (top) will be
-; set to a sentinel value.
+; set to a sentinel value pushed earlier.
 MACRO DROP
   ld a, [hld]
   ld c, a
@@ -64,8 +64,9 @@ ENDM
 
 ; Macro DUP pushes the current top onto the stack.
 ; This sequence is reused in several stack primitives.
-; If the stack is empty, this puts whatever junk is in bc into
-; the first real stack slot.
+; Initially if the stack is empty, bc will be set to a sentinel
+; value, and this will leave the sentinel at the base of
+; ParameterStack in RAM.
 MACRO DUP
   inc hl
   ld a, b
@@ -294,10 +295,8 @@ ENDM
 ; Returns the absolute value of of a number. ( n1 -- n2 )
   DEFCODE "ABS", _ABS, 0
   bit 7, b
-  jr z, .out
-  call _NEGATE
-.out
-  NEXT
+  ret z
+  jp Negate
 
 ; Shifts x1 left by u bits ( x1 u -- x2 )
   DEFCODE "LSHIFT", _LSHIFT, 0
@@ -306,13 +305,11 @@ ENDM
   ld a, d           ; shift amount to a
 .shift
   or a, a
-  jr z, .out        ; if shift amount is 0, done
+  ret z             ; if shift amount is 0, done
   sla c
   rl b
   dec a             ; dec shift amount
   jr .shift
-.out
-  NEXT
 
 ; Shifts x1 right by u bits ( x1 u -- x2 )
   DEFCODE "RSHIFT", _RSHIFT, 0
@@ -321,13 +318,11 @@ ENDM
   ld a, d           ; shift amount to a
 .shift
   or a, a
-  jr z, .out        ; if shift amount is 0, done
+  ret z             ; if shift amount is 0, done
   srl b
   rr c
   dec a             ; dec shift amount
   jr .shift
-.out
-  NEXT
 
 ; Shift right arithmetic by one bit. ( x1 -- x2 )
   DEFCODE "2/", _2SLASH, 0
@@ -352,12 +347,11 @@ ENDM
   xor $80
   cp a, d           ; compare high bytes
   jr c, .n1_gt_n2   ; if d > b, then n1 > n2
-  jr nz, .n1_le_n2
+  ret nz
   ld a, c           ; high bytes are equal
   cp a, e           ; compare low bytes
   jr c, .n1_gt_n2   ; if e > c, then n1 > n2
-.n1_le_n2
-  NEXT
+  NEXT              ; n1 <= n2
 .n1_gt_n2
   ld c, e           ; set bc from de (low byte)
   ld a, d           ; invert and set high byte
@@ -375,18 +369,16 @@ ENDM
   ld a, b           ; load bc = n2^$8000
   xor $80
   cp a, d           ; compare high bytes
-  jr c, .n1_gt_n2   ; if d > b, then n1 > n2
+  ret c             ; if d > b, then n1 > n2
   jr nz, .n1_le_n2
   ld a, c           ; high bytes are equal
   cp a, e           ; compare low bytes
-  jr c, .n1_gt_n2   ; if e > c, then n1 > n2
+  ret c             ; if e > c, then n1 > n2
 .n1_le_n2
   ld c, e           ; set bc from de (low byte)
   ld a, d           ; invert and set high byte
   xor $80           ; flip sign back
   ld b, a
-  NEXT
-.n1_gt_n2
   NEXT
 
 ; Adds elements on stack ( n1 n2 -- sum )
@@ -926,7 +918,8 @@ ENDM
   DEFCODE "(", _OPEN_PAREN, FLAG_IMMEDIATE
   PUSH16 ")"
   call _PARSE       ; scan forward til close paren
-  DROP              ; discard start address and length
+  dec hl            ; discard start address and length
+  dec hl
   DROP
   NEXT
 
@@ -937,12 +930,10 @@ ENDM
   call _PARSE       ; push string pointer and length
   ld a, [State]
   or a, a           ; test state
-  jr z, .out        ; if interpreting, just leave stuff on the stack
+  ret z             ; if interpreting, just leave stuff on the stack
   call _SWAP        ; swap them so we can push pointer first
   call _LITERAL     ; append code to push string pointer
-  call _LITERAL     ; append code to push length
-.out
-  NEXT
+  jp   _LITERAL     ; append code to push length
 
 ; Scans a string delimited by "" and compiles code to push its address and length.
   DEFCODE "S\"", _S_QUOTE, FLAG_IMMEDIATE
@@ -1047,15 +1038,14 @@ ENDM
   ; otherwise word is compiled
 .compiled
   PUSH16 -1         ; -1 for compiled words
-  jr .out
+  NEXT
 .immediate
   PUSH16 1          ; 1 for immediate words
-  jr .out
+  NEXT
 .not_found
   pop bc            ; restore c-addr
   pop hl            ; restore stack pointer
   PUSH16 0          ; 0 for not found
-.out
   NEXT
 
 ; Finds a space delimited word ( "<spaces>name" -- xt )
@@ -1252,18 +1242,15 @@ ENDM
   DEFCODE "ALIGN", _ALIGN, 0 
   ld a, [Here]
   bit 0, a          ; check if Here pointer is cell-aligned
-  jr z, .out        ; if so, ok
+  ret z             ; if so, ok
   PUSH16 1          ; otherwise allocate one byte to align it
   jp _ALLOT
-.out
-  NEXT
 
 ; Gets next aligned address. ( addr -- a-addr )
   DEFCODE "ALIGNED", _ALIGNED, 0 
   bit 0, c          ; test if aligned
-  jr z, .out        ; if aligned, do nothing
+  ret z             ; if aligned, do nothing
   inc bc            ; otherwise increment...
-.out
   NEXT
 
 ; Erases memory. ( addr u -- )
@@ -1771,7 +1758,7 @@ def VALUE_OFFSET   equ $4
   pop de            ; restore depth
   ld a, d
   or a, e
-  jr z, .done       ; if no entries on stack, done
+  ret z             ; if no entries on stack, done
   ; Print entries except for the top.
   dec de            ; top is printed separately
   ; If the stack has at least one entry, the first entry is a sentinel
@@ -1796,9 +1783,7 @@ def VALUE_OFFSET   equ $4
   jr .print_entry
 .print_top
   pop bc
-  call PrintNumber
-.done
-  NEXT
+  jp PrintNumber
 
 ; Prints a signed number and a space
 PrintNumber:
@@ -2148,8 +2133,7 @@ PrintNumber:
   DEFCODE ":", _COLON, 0
   call _CREATE_EMPTY
   call _TOGGLE_HIDDEN ; hide the word while defining it
-  call _RIGHT_BRACKET ; set state to compiling
-  NEXT
+  jp   _RIGHT_BRACKET ; set state to compiling
 
 ; Defines a new word with no name and pushes its xt. ( -- xt )
   DEFCODE ":NONAME", _COLON_NO_NAME, 0
@@ -2185,23 +2169,20 @@ PrintNumber:
   call _TOGGLE_HIDDEN ; hide the word while defining it
   call _RIGHT_BRACKET ; set state to compiling
   ; We need some way to find this unnamed thing, so push its xt.
-  call _LATEST
-  NEXT
+  jp   _LATEST
 
 ; Ends the current definition. ( -- )
   DEFCODE ";", _SEMICOLON, FLAG_IMMEDIATE
   PUSH16 $c9        ; ret opcode
   call _C_COMMA     ; append ret
   call _TOGGLE_HIDDEN ; unhide the word, it's ready
-  call _LEFT_BRACKET  ; set state to interpreting
-  NEXT
+  jp   _LEFT_BRACKET  ; set state to interpreting
 
 ; Compiles a call to the word currently being compiled. ( -- )
   DEFCODE "RECURSE", _RECURSE, FLAG_IMMEDIATE
   call _LATEST      ; word currently being defined
   call _TO_BODY     ; skip past the header
-  call _COMPILE_COMMA ; generate a call
-  NEXT
+  jp   _COMPILE_COMMA ; generate a call
 
 ; Appends a test and branch-if-zero sequence with an undefined target and pushes
 ; the address of the target to be patched later. ( -- orig )
@@ -2296,8 +2277,7 @@ PrintNumber:
   call _COMPILE_COMMA
   call _0BRANCH     ; branch over this case if it does not match
   PUSH16 _DROP      ; drop comparison value if matched
-  call _COMPILE_COMMA
-  NEXT
+  jp   _COMPILE_COMMA
 
 ; ENDOF fixes up the target for the last OF and adds a branch out. ( orig1 -- orig2 )
   DEFCODE "ENDOF", _ENDOF, FLAG_IMMEDIATE
