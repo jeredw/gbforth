@@ -2106,7 +2106,7 @@ PrintNumber:
 
 ; Enter interpretation state. ( -- )
   DEFCODE "[", _LEFT_BRACKET, FLAG_IMMEDIATE
-  ld a, 0
+  xor a
   ld [State], a
   ld [State+1], a
   NEXT
@@ -2169,7 +2169,7 @@ PrintNumber:
   ld [hli], a
   ld a, [Latest+1]
   ld [hli], a
-  ld a, 0           ; set length byte to 0
+  xor a             ; set length byte to 0
   ld [hli], a
   ld a, l           ; update HERE
   ld [Here], a

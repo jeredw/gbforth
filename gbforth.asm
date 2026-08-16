@@ -71,7 +71,6 @@ EXPORT FormatBuf
 ; Space reserved for parameter stack
 def STACK_SENTINEL equ $bad5
 EXPORT STACK_SENTINEL
-StackSentinel: dw
 def PARAMETER_STACK_SIZE equ 256
 ParameterStack: ds PARAMETER_STACK_SIZE
 EXPORT ParameterStack
@@ -157,7 +156,7 @@ Boot:
   nop
   di
   ld sp, TopOfStack
-  ld a, 0
+  xor a
   ld [rNR52], a     ; Turn off audio right away.
   call DisableLCD
 
@@ -184,12 +183,7 @@ Boot:
   ld a, HIGH(SaveData+$20)
   ld [PagePtr+1], a
   call ResetProgramState
-  ; to help with detecting stack underflows
-  ld a, HIGH(STACK_SENTINEL)
-  ld [StackSentinel], a
-  ld a, LOW(STACK_SENTINEL)
-  ld [StackSentinel+1], a
-  ld a, $c3         ; set up trampoline for indirect jumps
+  ld a, $c3         ; c3 is JP, set up trampoline for indirect jumps
   ld [Indirect], a
 
   ; Copy tiles for font into VRAM at $8000
@@ -328,7 +322,7 @@ Interpreter:
   ld [SavedPagePtr], a
   ld a, [PagePtr+1]
   ld [SavedPagePtr+1], a
-  ld a, 0           ; clear cursor position for output
+  xor a             ; clear cursor position for output
   ld [CursorY], a
   ld [CursorX], a
   ld [Key], a       ; reset any buffered input key
@@ -339,7 +333,7 @@ Interpreter:
   ld a, SC
   ld [CurChar], a
   ; Start from the beginning of the program.
-  ld a, 0
+  xor a
   ld [Editing], a
   ld a, LOW(SaveData)
   ld [ScanPtr], a
@@ -548,7 +542,7 @@ ScanSignedNumber:
   ; Add in the next digit.
   add a, c          ; (bc * base) + a
   ld c, a
-  ld a, 0
+  ld a, 0           ; nb: preserve carry
   adc b
   ld b, a
   ld a, d           ; check whether any digits remain
@@ -738,7 +732,7 @@ EXPORT UnsignedDiv32By8
 ; Returns quotient in BC, remainder in A.
 UnsignedDiv16By8:
   ld e, 16
-  ld a, 0
+  xor a
 .div
   sla c
   rl b
@@ -1118,7 +1112,7 @@ CursorUp:
   jr UpDownStoreY
 
 NewLine:
-  ld a, 0
+  xor a
   ld [CursorX], a
 CursorDown:
   ld a, [CursorY]
@@ -1242,7 +1236,7 @@ UpdateButtons:
   dec a
   ld [KeyTimer], a
   jr nz, .new_buttons ; no repeat yet
-  ld a, 0
+  xor a
   ld [CurButtons], a  ; reset cur buttons so we repeat
   ld a, KEY_REPEAT_RATE
   ld [KeyTimer], a    ; reset key timer to repeat rate
