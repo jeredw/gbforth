@@ -341,10 +341,10 @@ ENDM
   ld a, [hld]       ; load de = n1^$8000
   ld e, a
   ld a, [hld]
-  xor $80
+  xor a, $80
   ld d, a
   ld a, b           ; load bc = n2^$8000
-  xor $80
+  xor a, $80
   cp a, d           ; compare high bytes
   jr c, .n1_gt_n2   ; if d > b, then n1 > n2
   ret nz
@@ -355,7 +355,7 @@ ENDM
 .n1_gt_n2
   ld c, e           ; set bc from de (low byte)
   ld a, d           ; invert and set high byte
-  xor $80           ; flip sign back
+  xor a, $80        ; flip sign back
   ld b, a
   NEXT
 
@@ -364,10 +364,10 @@ ENDM
   ld a, [hld]       ; load de = n1^$8000
   ld e, a
   ld a, [hld]
-  xor $80
+  xor a, $80
   ld d, a
   ld a, b           ; load bc = n2^$8000
-  xor $80
+  xor a, $80
   cp a, d           ; compare high bytes
   ret c             ; if d > b, then n1 > n2
   jr nz, .n1_le_n2
@@ -377,7 +377,7 @@ ENDM
 .n1_le_n2
   ld c, e           ; set bc from de (low byte)
   ld a, d           ; invert and set high byte
-  xor $80           ; flip sign back
+  xor a, $80        ; flip sign back
   ld b, a
   NEXT
 
@@ -569,10 +569,10 @@ ENDM
   ld a, [hld]       ; load de = n1^$8000
   ld e, a
   ld a, [hld]
-  xor $80
+  xor a, $80
   ld d, a
   ld a, b           ; load ac = n2^$8000
-  xor $80
+  xor a, $80
   cp a, d           ; compare high bytes
   jr c, .n1_gt_n2   ; if d > a, then n1 > n2
   jr nz, .n1_le_n2
@@ -609,12 +609,12 @@ ENDM
 ; Tests if n1 is less than n2 ( n1 n2 -- flag )
   DEFCODE "<", _LESS_THAN, 0
   ld a, b           ; load bc = n2^$8000
-  xor $80
+  xor a, $80
   ld b, a
   ld a, [hld]       ; load de = n1^$8000
   ld e, a
   ld a, [hld]
-  xor $80
+  xor a, $80
   cp a, b           ; compare high bytes
   jr c, .n1_lt_n2   ; if b > d, then n2 > n1
   jr nz, .n1_ge_n2
@@ -1157,8 +1157,7 @@ ENDM
   ld a, h
   sbc HIGH(ParameterStack-1)
   ld d, a
-  xor a, a          ; clear carry
-  rr d              ; shift right to divide by 2 (bytes -> cells)
+  sra d             ; shift right to divide by 2 (bytes -> cells)
   rr e
   DUP               ; push depth
   ld b, d
@@ -1265,7 +1264,7 @@ ENDM
   ld h, b           ; get dest addr in hl
   ld l, c
 .clear
-  xor a, a
+  xor a
   ld [hli], a       ; set current addr to 0
   dec de            ; dec length
   ld a, d           ; test if length is zero
@@ -1659,8 +1658,7 @@ def VALUE_OFFSET   equ $4
 
 ; Counts how many bytes are in n1 cells. ( n1 -- n2 )
   DEFCODE "CELLS", _CELLS, 0
-  xor a             ; clear carry
-  rl c              ; 1 cell = 2 bytes, so shift left
+  sla c             ; 1 cell = 2 bytes, so shift left
   rl b
   NEXT
 
@@ -2523,7 +2521,7 @@ EndLoop:
   ; Terminate the loop if old diff and new diff have different signs.
   pop de            ; get old diff in de
   ld a, b
-  xor d             ; d xor b
+  xor a, d          ; d xor b
   bit 7, a          ; 0 = same sign
   jr z, .continue   ; if same sign, continue
   ; Loop has crossed limit so it is done.
