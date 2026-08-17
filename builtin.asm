@@ -647,6 +647,23 @@ ENDM
   ld bc, TRUE       ; yes, <
   NEXT
 
+; Non-standard but useful comparisons...
+  DEFCODE "<=", _LESS_OR_EQUAL, 0
+  call _GREATER_THAN
+  jp _INVERT
+
+  DEFCODE ">=", _GREATER_OR_EQUAL, 0
+  call _LESS_THAN
+  jp _INVERT
+
+  DEFCODE "U<=", _U_LESS_OR_EQUAL, 0
+  call _U_GREATER_THAN
+  jp _INVERT
+
+  DEFCODE "U>=", _U_GREATER_OR_EQUAL, 0
+  call _U_LESS_THAN
+  jp _INVERT
+
 ; Tests if a number is within a range, i.e. low <= test < high ( test low high -- flag )
   DEFCODE "WITHIN", _WITHIN, 0
   ; Magic reference implementation from forth-standard.org
