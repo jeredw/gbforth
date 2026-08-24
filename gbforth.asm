@@ -751,6 +751,9 @@ UnsignedDiv16By8:
 UnsignedDiv16By16:
 EXPORT UnsignedDiv16By16
   ld hl, 0          ; initialize remainder to 0
+; Entrypoint with preset remainder. Used for */, */MOD.
+UnsignedDiv16By16R:
+EXPORT UnsignedDiv16By16R
   ld a, 16          ; count 16 bits
   ld [Temp], a      ; store counter in temp
 .div

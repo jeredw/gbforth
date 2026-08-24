@@ -467,8 +467,51 @@ ENDM
   ld c, e
   NEXT
 
-; TODO: */
-; TODO: */MOD
+; Multiplies and divides elements on stack ( n1 n2 n3 -- n4 )
+; n4 = n1 * n2 / n3
+  DEFCODE "*/", _STAR_SLASH, 0
+  call _M_ROT       ; ( n1 n2 n3 -- n3 n1 n2 )
+  ld a, [hld]       ; pop de (n1)
+  ld e, a
+  ld a, [hld]
+  ld d, a
+  push hl           ; save stack pointer
+  call Mul16By16    ; set bc = de * bc
+  pop hl            ; restore stack pointer
+  ; de:bc is the 32-bit product.
+  ld a, e           ; save high(product)
+  ld [Temp], a
+  ld a, d
+  ld [Temp+1], a
+  ld a, [hld]       ; pop de (n3), divisor
+  ld e, a
+  ld a, [hld]
+  ld d, a
+  push hl           ; save stack pointer
+  ; Since */ guarantees the result fits in 16 bits, high(product) < divisor,
+  ; and the first 16 steps of a division loop just shift it into remainder.
+  ld a, [Temp]      ; init remainder from high(product)
+  ld l, a
+  ld a, [Temp+1]
+  ld h, a
+  ; Now do the remaining 16 steps of division
+  call UnsignedDiv16By16R
+  pop hl            ; restore stack pointer
+  ; bc is the quotient, de is the remainder
+  NEXT
+
+; Multiplies and divides elements on stack ( n1 n2 n3 -- n4 n5 )
+; n5 = (n1 * n2) / n3, n4 = (n1 * n2) % n3
+  DEFCODE "*/MOD", _STAR_SLASH_MOD, 0
+  call _STAR_SLASH
+  ; _STAR_SLASH leaves the remainder in de.
+  ; Push it under the quotient in bc.
+  inc hl
+  ld a, d
+  ld [hli], a
+  ld [hl], e
+  NEXT
+
 ; TODO: UM/MOD
 ; TODO: FM/MOD
 ; TODO: SM/REM
