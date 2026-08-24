@@ -512,7 +512,37 @@ ENDM
   ld [hl], e
   NEXT
 
-; TODO: UM/MOD
+; Unsigned 32-bit by 16-bit division ( ud u1 -- u2 u3 )
+; u2 = ud / u1, u3 = ud % u1
+  DEFCODE "UM/MOD", _U_M_SLASH_MOD, 0
+  ; Get divisor in de
+  ld d, b
+  ld e, c
+  ; Pop high word of dividend.
+  ; Since UM/MOD guarantees the result fits in 16 bits, high < divisor,
+  ; and the first 16 steps of a division loop just shift it into remainder.
+  DROP
+  ld a, c           ; save high word of dividend
+  ld [Temp], a
+  ld a, b
+  ld [Temp+1], a
+  ; Pop low word of dividend.
+  DROP
+  push hl           ; save stack pointer
+  ld a, [Temp]      ; restore high word of dividend as remainder
+  ld l, a
+  ld a, [Temp+1]
+  ld h, a
+  ; Do the remaining 16 steps of division
+  call UnsignedDiv16By16R
+  pop hl            ; restore stack pointer
+  ; bc is the quotient, de is the remainder
+  inc hl
+  ld a, d
+  ld [hli], a
+  ld [hl], e
+  NEXT
+
 ; TODO: FM/MOD
 ; TODO: SM/REM
 ; TODO: M*
