@@ -703,6 +703,41 @@ EXPORT Mul16By16
   ld c, l
   ret
 
+; Multiplies BC by DE and stores the signed 32-bit result in DE:BC.
+Mul16By16S:
+EXPORT Mul16By16S
+  bit 7, b
+  jr nz, .bc_neg
+  bit 7, d
+  jr z, Mul16By16   ; BC+ DE+
+  push bc           ; BC+ DE-
+  call Mul16By16
+  pop hl
+  jr .sub           ; subtract extra BC
+.bc_neg
+  bit 7, d
+  jr nz, .both_neg
+  push de           ; BC- DE+
+  call Mul16By16
+  pop hl
+  jr .sub           ; subtract extra DE
+.both_neg
+  push bc           ; BC- DE-
+  push de
+  call Mul16By16
+  pop hl
+  call .sub         ; subtract extra DE
+  pop hl
+  ; fall through to subtract extra BC
+.sub
+  ld a, e
+  sub a, l
+  ld e, a
+  ld a, d
+  sbc a, h
+  ld d, a
+  ret
+
 ; Divides BC:DE by the 8-bit value in [HL].
 ; Returns quotient in BC:DE, remainder in A.
 UnsignedDiv32By8:

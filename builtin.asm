@@ -467,6 +467,20 @@ ENDM
   ld c, e
   NEXT
 
+; Signed multiply elements on the stack ( n1 n2 -- d )
+  DEFCODE "M*", _M_STAR, 0
+  ld a, [hld]       ; pop de
+  ld e, a
+  ld a, [hld]
+  ld d, a
+  push hl           ; save stack pointer
+  call Mul16By16S   ; set de:bc = de * bc
+  pop hl            ; restore stack pointer
+  DUP               ; push bc
+  ld b, d           ; push de
+  ld c, e
+  NEXT
+
 ; Multiplies and divides elements on stack ( n1 n2 n3 -- n4 )
 ; n4 = n1 * n2 / n3
   DEFCODE "*/", _STAR_SLASH, 0
@@ -545,7 +559,6 @@ ENDM
 
 ; TODO: FM/MOD
 ; TODO: SM/REM
-; TODO: M*
 
 ; Sign extend n into a 32-bit word ( n -- d )
   DEFCODE "S>D", _S_TO_D, 0
