@@ -55,6 +55,12 @@ PicPtr: dw          ; Index for pictured numeric output
 EXPORT PicPtr
 PicLen: db
 EXPORT PicLen
+EvalEndPtr: dw      ; If nonzero, the end of the current eval
+EXPORT EvalEndPtr
+EvalEndChar: db     ; Saved character at end of current eval
+EXPORT EvalEndChar
+EvalScanPtr: dw     ; Saved scan position before eval
+EXPORT EvalScanPtr
 
 ; Note: wordlen must immediately precede FormatBuf so that it can be treated as
 ; a length-prefixed byte string.
@@ -350,6 +356,7 @@ Interpreter:
 ; Flag program done executing. Tell the user, unwind the stack and bail.
 EXPORT Done
 Done:
+  call ResetEval
   ; TODO flag done somehow (cursor?)
   ; Pause so the user can see output.
   halt
@@ -374,6 +381,7 @@ Done:
 ; Flag an error condition. Unwind the stack and bail.
 EXPORT Error
 Error:
+  call ResetEval
   ld a, [LastWordScanPtr]
   ld [ScanPtr], a
   ld a, [LastWordScanPtr+1]
@@ -395,6 +403,37 @@ ResetProgramState:
   ld [Here], a
   ld a, HIGH(User)
   ld [Here+1], a
+  xor a
+  ld [EvalEndPtr], a
+  ld [EvalEndPtr+1], a
+  ret
+
+; Cleans up sentinel eof character after evaluate string and resets scan ptr.
+; Called both between program runs for sanity, and when the interpreter hits
+; the eof at the end of an eval.
+;
+; Returns with z set if there was no eval.
+ResetEval:
+EXPORT ResetEval
+  ld a, [EvalEndPtr] ; get de = eval end char ptr
+  ld e, a
+  ld a, [EvalEndPtr+1]
+  ld d, a
+  or a, e
+  ret z             ; if ptr is 0, no eval pending
+  ld a, [EvalEndChar]
+  ld [de], a        ; replace char overwritten by sentinel
+  ; Reset scan ptr. This is for QUIT which needs to continue scanning.
+  ; Done and Error will simply ignore ScanPtr here.
+  ld a, [EvalScanPtr]
+  ld [ScanPtr], a
+  ld a, [EvalScanPtr+1]
+  ld [ScanPtr+1], a
+  ; Reset eval end ptr
+  xor a
+  ld [EvalEndPtr], a
+  ld [EvalEndPtr+1], a
+  inc a             ; clear z flag
   ret
 
 MoveCursorToScanPtr:

@@ -1832,6 +1832,48 @@ def VALUE_OFFSET   equ $4
   DROP              ; drop xt
   jp Indirect       ; execute and then return to caller
 
+; Evaluates a forth program in a string. ( c-addr u -- )
+; Only supports one level of nesting for EVALUATE, and hackily modifies the
+; byte after the string to be an eof sentinel character.
+  DEFCODE "EVALUATE", _EVALUATE, 0
+  ; If there is already an eval end ptr set, we are already in an evaluate.
+  ; We don't support nested evaluate, so just error.
+  ld a, [EvalEndPtr]
+  jp nz, Error
+  ld a, [EvalEndPtr+1]
+  jp nz, Error
+  ; Put a sentinel character after the end of the string.
+  ; This would normally signal the end of the source text.
+  ld a, [hld]       ; drop stack into de = c-addr
+  ld e, a
+  ld a, [hld]
+  ld d, a
+  ld a, c           ; add length to c-addr (result in bc)
+  add a, e
+  ld c, a
+  ld a, b
+  adc a, d
+  ld b, a
+  ld a, c           ; save end pointer
+  ld [EvalEndPtr], a
+  ld a, b
+  ld [EvalEndPtr+1], a
+  ld a, [bc]        ; get char after end
+  ld [EvalEndChar], a ; save it
+  ld a, END_SENTINEL
+  ld [bc], a        ; store an eof there instead
+  ; Save scanptr and replace it to restart scanning inside string.
+  ld a, [ScanPtr]
+  ld [EvalScanPtr], a
+  ld a, [ScanPtr+1]
+  ld [EvalScanPtr+1], a
+  ld a, e           ; set scanptr to string pointer
+  ld [ScanPtr], a
+  ld a, d
+  ld [ScanPtr+1], a
+  DROP              ; pop c-addr
+  NEXT
+
 ; Exits the current word ( -- )
   DEFCODE "EXIT", _EXIT, 0
   ; pop the return address for the call to EXIT, so that NEXT (ret) returns to
@@ -2750,10 +2792,15 @@ EndLoop:
   call nz, _LITERAL ; if compiling, append code to push
   jr .next_word
 .eof
+  call ResetEval    ; check if in evaluate and reset it if so
+  jr nz, .eval_done ; if reset, continue after evaluate
   ld a, [State]
   or a, a           ; test state
   jp z, Done        ; eof when interpreting -> done
   jp Error          ; else eof when compiling -> error
+.eval_done
+  DROP              ; drop last token that hit eof
+  jr .next_word     ; continue from original scan ptr
 
 ; Strangely, _QUIT is how we enter the interpreter.
 EXPORT _QUIT
