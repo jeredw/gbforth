@@ -2161,6 +2161,42 @@ PrintNumber:
   ei
   NEXT
 
+; Reads a string from the keyboard. ( c-addr n1 -- len )
+  DEFCODE "ACCEPT", _ACCEPT, 0
+  PUSH16 0          ; push length read ( -- c-addr n1 len )
+.next_key
+  call _SWAP        ; get capacity ( -- c-addr len n1 )
+  ld a, b           ; test if capacity remains
+  or a, c
+  jr nz, .read_key  ; if capacity left, read another key
+  call _DROP        ; drop all except len
+  call _SWAP
+  call _DROP
+  jr .done
+.read_key
+  call _ROT         ; ( -- len n1 c-addr )
+  call _KEY         ; read a key ( -- len n1 c-addr key )
+  ld a, c
+  cp a, CR
+  jr nz, .store_key ; if key is not CR, store it
+  call _DROP        ; drop all except len
+  call _DROP        ;
+  call _DROP        ;
+  jr .done
+.store_key
+  call _DUP         ; dup key
+  call _EMIT        ; print key on screen
+  call _OVER        ; ( -- len n1 c-addr key c-addr )
+  call _STORE       ; store key to c-addr ( -- len n1 c-addr )
+  call _INC         ; increment address
+  call _SWAP        ; ( -- len c-addr n1 )
+  call _DEC         ; decrement capacity
+  call _ROT         ; ( -- c-addr n1 len )
+  call _INC         ; increment length
+  jr .next_key
+.done
+  NEXT
+
 ; Stores a value x to addr. ( x addr -- )
   DEFCODE "!", _STORE, 0
   ld a, [hld]       ; get x low byte
