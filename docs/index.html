@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Gameboy Forth</title></head>
+<body>
+  <canvas id="canvas" width="640" height="576" oncontextmenu="event.preventDefault()"></canvas>
+  <script>
+    var Module = {
+      canvas: document.getElementById('canvas')
+    };
+  </script>
+  <script src="gameboy.js"></script>
+  <pre>
+  Arrow keys are directional buttons (cursor movement)
+  &lt;Enter&gt; is start (run program)
+  &lt;A&gt; is A button (accept character)
+  &lt;S&gt; is B button (backspace)
+  </pre>
+</body>
+</html>
