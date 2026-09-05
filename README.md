@@ -1,7 +1,11 @@
 # Gameboy Forth
 
+<img width="320" height="288" alt="image" src="https://github.com/user-attachments/assets/de209b9d-46e8-4988-ac25-1f2bad0b4b16" />
+
+[Try it in your browser](https://jeredw.github.io/gbforth/)
+
 Gameboy Forth lets you use an onscreen keyboard to enter little Forth programs
-and run them on your Gameboy. This will be a boring monochrome Forth, although
+and run them on your Gameboy. It is a boring monochrome Forth, although
 it might be fun to build a
 [colorForth](https://en.wikipedia.org/wiki/ColorForth) for the Gameboy Color.
 
@@ -11,16 +15,17 @@ nicely on one VRAM tilemap page. To save programs, we target an
 save RAM, allowing for 8 full code pages. On boot, if save RAM starts with
 `( gbforth )`, we preserve it, otherwise it is reset.
 
-Forth runs as a REPL that scans one input key at a time and prints output
-immediately. This is not 100% true, since modern Forths are line buffered to
-allow line editing at least. To make editing on a small screen simpler, Gameboy
-Forth buffers your whole program instead of just the current line.
+Forth traditionally runs as a line buffered REPL which prints helpful
+encouragement like `ok` as you type lines. To make editing on a small
+screen simpler, Gameboy Forth buffers your whole program instead of just the
+current line.
 
 When you press START, the program is re-interpreted. If there is a syntax error,
 Gameboy Forth will return to the editor with the cursor positioned near it.
 Otherwise the editor cursor will not reappear until you press START again.
-`KEY` still uses the on screen keyboard to read input, and if it is run in an
-immediate context it will block interpreting the rest of the program.
+
+Note: `KEY` still uses the on screen keyboard to read input, and if it is run
+in interpreter context it will block interpreting the rest of the program.
 
 ## VM details
 
@@ -285,6 +290,6 @@ writing actual Gameboy games - this language probably isn't it.
 
 ## What would be better
 
-TODO...  Named parameters and no implicit parameter stack? Lexical scope? It's
+Named parameters and no implicit parameter stack? Lexical scope? It's
 interesting that taking out the implicit stack kinda makes it not feel like
-Forth anymore.
+Forth anymore. Anyway, it is fun to play with.
