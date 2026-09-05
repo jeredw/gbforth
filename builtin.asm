@@ -269,9 +269,8 @@ ENDM
   DEFCODE "?DUP", _QDUP, 0
   ld a, b
   or a, c
-  jr z, .to_next
+  ret z
   DUP
-.to_next
   NEXT
 
 ; Increments top of stack ( n -- inc )
@@ -343,15 +342,14 @@ ENDM
   ld a, [hld]
   xor a, $80
   ld d, a
-  ld a, b           ; load bc = n2^$8000
+  ld a, b           ; load ac = n2^$8000
   xor a, $80
   cp a, d           ; compare high bytes
   jr c, .n1_gt_n2   ; if d > b, then n1 > n2
   ret nz
   ld a, c           ; high bytes are equal
   cp a, e           ; compare low bytes
-  jr c, .n1_gt_n2   ; if e > c, then n1 > n2
-  NEXT              ; n1 <= n2
+  ret nc            ; return if n1 <= n2
 .n1_gt_n2
   ld c, e           ; set bc from de (low byte)
   ld a, d           ; invert and set high byte
@@ -366,7 +364,7 @@ ENDM
   ld a, [hld]
   xor a, $80
   ld d, a
-  ld a, b           ; load bc = n2^$8000
+  ld a, b           ; load ac = n2^$8000
   xor a, $80
   cp a, d           ; compare high bytes
   ret c             ; if d > b, then n1 > n2
