@@ -1,5 +1,5 @@
 *.o
-gbforth.gb
+/gbforth.gb
 gbforth.sav
 gbforth.sym
 .vscode/
